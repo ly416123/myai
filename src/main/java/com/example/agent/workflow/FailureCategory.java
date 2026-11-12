@@ -1,0 +1,22 @@
+package com.example.agent.workflow;
+
+/** 可记录、可评测的安全失败类别；不保存原始异常文本。 */
+public enum FailureCategory {
+    MODEL_RATE_LIMIT,
+    MODEL_SERVER,
+    MODEL_NETWORK,
+    MODEL_TIMEOUT,
+    MODEL_AUTHENTICATION,
+    MODEL_BAD_REQUEST,
+    MODEL_UNKNOWN,
+    TOOL_ARGUMENTS,
+    TOOL_NOT_FOUND,
+    TOOL_EXECUTION,
+    TOOL_TIMEOUT_UNKNOWN,
+    TOOL_BUDGET_EXCEEDED,
+    MODEL_BUDGET_EXCEEDED,
+    TASK_DEADLINE,
+    MAX_MODEL_CALLS,
+    CANCELLED,
+    UNKNOWN
+}
