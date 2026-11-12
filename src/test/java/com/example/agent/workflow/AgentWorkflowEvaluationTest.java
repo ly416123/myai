@@ -257,10 +257,14 @@ class AgentWorkflowEvaluationTest {
     void cancellationIsPersistedAndObservedDuringModelWait() throws Exception {
         ToolRegistry tools = new ToolRegistry();
         CountDownLatch requestStarted = new CountDownLatch(1);
+        AtomicInteger interruptedCalls = new AtomicInteger();
         ModelClient blockingModel = (messages, definitions) -> {
             requestStarted.countDown();
             try { Thread.sleep(5_000); }
-            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            catch (InterruptedException interrupted) {
+                interruptedCalls.incrementAndGet();
+                Thread.currentThread().interrupt();
+            }
             return new ModelResponse("late", List.of());
         };
         try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
@@ -276,6 +280,43 @@ class AgentWorkflowEvaluationTest {
             assertFalse(worker.isAlive());
             assertEquals(RunStatus.CANCELLED, result.get().status());
             assertEquals(FailureCategory.CANCELLED, result.get().failureCategory());
+            assertEquals(1, interruptedCalls.get(), "cancel request should interrupt the active model task");
+        }
+    }
+
+    @Test
+    void cancellationRequestedAsModelReturnsWinsBeforeSuccessfulCommit() throws Exception {
+        ToolRegistry tools = new ToolRegistry();
+        CountDownLatch requestStarted = new CountDownLatch(1);
+        CountDownLatch allowReturn = new CountDownLatch(1);
+        AtomicInteger interruptedCalls = new AtomicInteger();
+        ModelClient blockingModel = (messages, definitions) -> {
+            requestStarted.countDown();
+            try { allowReturn.await(); }
+            catch (InterruptedException interrupted) {
+                interruptedCalls.incrementAndGet();
+                // 模拟 SDK/底层实现即使收到中断仍返回结果；Runtime 仍须尊重取消请求。
+            }
+            return new ModelResponse("must not commit", List.of());
+        };
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            InMemoryRunStore store = new InMemoryRunStore();
+            AgentRuntime runtime = runtime(blockingModel, tools, executor, store,
+                    new RuntimeConfig(5, 2, 0, Duration.ofSeconds(10)));
+            AtomicReference<RunRecord> result = new AtomicReference<>();
+            Thread worker = Thread.ofVirtual().start(() -> result.set(runtime.runTracked("cancel before commit")));
+            assertTrue(requestStarted.await(2, TimeUnit.SECONDS));
+            String runId = store.list().getFirst().runId();
+
+            runtime.cancelRun(runId);
+            allowReturn.countDown();
+            worker.join(2_000);
+
+            assertFalse(worker.isAlive());
+            assertEquals(1, interruptedCalls.get());
+            assertEquals(RunStatus.CANCELLED, result.get().status());
+            assertNull(result.get().finalAnswer());
+            assertEquals(RunStatus.CANCELLED, store.find(runId).orElseThrow().status());
         }
     }
 

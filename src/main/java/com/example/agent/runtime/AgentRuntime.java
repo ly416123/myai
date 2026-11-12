@@ -28,7 +28,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 单 Agent Workflow 的显式控制循环，同时负责状态记录、预算执行和安全恢复。
@@ -44,7 +43,7 @@ public final class AgentRuntime {
     private final ToolExecutor toolExecutor;
     private final RunStore runStore;
     private final RuntimeConfig config;
-    private final ConcurrentHashMap<String, AtomicBoolean> cancellationRequests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RunControl> runControls = new ConcurrentHashMap<>();
 
     /** 保留基础版构造方式，使用内存存储和默认阶段二预算。 */
     public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor, int maxModelCalls) {
@@ -79,12 +78,14 @@ public final class AgentRuntime {
         String runId = UUID.randomUUID().toString();
         RunRecord run = RunRecord.create(runId, userInput, config.taskTimeout());
         run.addMessage(Message.user(userInput));
-        runStore.save(run); // CREATED 状态先落盘，确保任务一开始便可追踪。
-        cancellationRequests.put(runId, new AtomicBoolean(false));
+        RunControl control = new RunControl();
+        control.active = true;
+        runControls.put(runId, control);
         try {
+            runStore.save(run); // CREATED 状态先落盘，确保任务一开始便可追踪。
             return execute(run, false);
         } finally {
-            cancellationRequests.remove(runId);
+            runControls.remove(runId, control);
         }
     }
 
@@ -93,31 +94,50 @@ public final class AgentRuntime {
      * 已完成的工具步骤保留，未开始工具可继续，执行中工具不会自动重放。
      */
     public RunRecord resume(String runId) {
-        RunRecord run = runStore.find(runId).orElseThrow(() -> new IllegalArgumentException("Run not found"));
-        if (run.status() != RunStatus.RUNNING && run.status() != RunStatus.CREATED) {
-            throw new IllegalStateException("Only a non-terminal run can be resumed");
-        }
-        run.setResumed(true);
-        run.touch(Instant.now());
-        runStore.save(run);
-        cancellationRequests.put(runId, new AtomicBoolean(false));
+        RunControl control = runControls.computeIfAbsent(runId, ignored -> new RunControl());
         try {
+            RunRecord run;
+            synchronized (control) {
+                if (control.active) throw new IllegalStateException("Run is already active");
+                run = runStore.find(runId).orElseThrow(() -> new IllegalArgumentException("Run not found"));
+                if (run.status() != RunStatus.RUNNING && run.status() != RunStatus.CREATED) {
+                    throw new IllegalStateException("Only a non-terminal run can be resumed");
+                }
+                control.active = true;
+                run.setResumed(true);
+                run.touch(Instant.now());
+                runStore.save(run);
+            }
             return execute(run, true);
         } finally {
-            cancellationRequests.remove(runId);
+            synchronized (control) { control.active = false; }
+            runControls.remove(runId, control);
         }
     }
 
-    /** 请求取消当前运行；正在进行的工具不能因此被视为已撤销，Runtime 会等待其返回或超时。 */
+    /** 请求取消运行；由执行线程确认终态，正在进行的工具不会被视为已撤销。 */
     public void cancelRun(String runId) {
-        RunRecord run = runStore.find(runId).orElseThrow(() -> new IllegalArgumentException("Run not found"));
+        RunControl control = runControls.computeIfAbsent(runId, ignored -> new RunControl());
+        synchronized (control) {
+            RunRecord current = runStore.find(runId)
+                    .orElseThrow(() -> new IllegalArgumentException("Run not found"));
+            ensureNonTerminal(current);
+            if (control.active) {
+                control.requestCancellation();
+            } else {
+                // 没有活跃执行线程时（例如恢复前），直接将检查点终止为已取消。
+                current.transitionTo(RunStatus.CANCELLED, Instant.now(), FailureCategory.CANCELLED);
+                runStore.save(current);
+                runControls.remove(runId, control);
+            }
+        }
+        log.info("runId={} cancellation=requested", runId);
+    }
+
+    private static void ensureNonTerminal(RunRecord run) {
         if (run.status() != RunStatus.CREATED && run.status() != RunStatus.RUNNING) {
             throw new IllegalStateException("Only a non-terminal run can be cancelled");
         }
-        cancellationRequests.computeIfAbsent(runId, ignored -> new AtomicBoolean()).set(true);
-        run.transitionTo(RunStatus.CANCELLED, Instant.now(), FailureCategory.CANCELLED);
-        runStore.save(run);
-        log.info("runId={} status={} failureCategory={}", runId, RunStatus.CANCELLED, FailureCategory.CANCELLED);
     }
 
     private RunRecord execute(RunRecord run, boolean recovering) {
@@ -175,32 +195,48 @@ public final class AgentRuntime {
                     continue;
                 }
 
-                run.addMessage(Message.assistant(response.content()));
-                run.setFinalAnswer(response.content());
-                run.transitionTo(RunStatus.SUCCEEDED, Instant.now(), null);
-                persist(run);
+                RunControl control = runControls.get(run.runId());
+                synchronized (control) {
+                    checkCancelled(run);
+                    run.addMessage(Message.assistant(response.content()));
+                    run.setFinalAnswer(response.content());
+                    run.transitionTo(RunStatus.SUCCEEDED, Instant.now(), null);
+                    persist(run);
+                }
                 log.info("runId={} status={} modelCalls={} toolCalls={} durationMs={} resumed={} tokensKnown={}",
                         run.runId(), run.status(), run.modelCalls(), run.toolCalls(), run.totalDurationMillis(),
                         run.resumed(), run.tokenUsageKnown());
                 return run;
             }
         } catch (WorkflowAbort abort) {
-            if (abort.category == FailureCategory.CANCELLED) {
-                run.transitionTo(RunStatus.CANCELLED, Instant.now(), abort.category);
-            } else {
-                run.transitionTo(RunStatus.FAILED, Instant.now(), abort.category);
+            RunStatus terminalStatus;
+            FailureCategory terminalCategory;
+            RunControl control = runControls.get(run.runId());
+            synchronized (control) {
+                boolean cancelled = abort.category == FailureCategory.CANCELLED || control.cancellationRequested();
+                terminalStatus = cancelled ? RunStatus.CANCELLED : RunStatus.FAILED;
+                terminalCategory = cancelled ? FailureCategory.CANCELLED : abort.category;
+                run.transitionTo(terminalStatus, Instant.now(), terminalCategory);
+                persist(run);
             }
-            persist(run);
             log.warn("runId={} status={} failureCategory={} modelCalls={} toolCalls={} durationMs={} resumed={}",
-                    run.runId(), run.status(), abort.category, run.modelCalls(), run.toolCalls(),
+                    run.runId(), terminalStatus, terminalCategory, run.modelCalls(), run.toolCalls(),
                     run.totalDurationMillis(), run.resumed());
             return run;
         } catch (RuntimeException unexpected) {
             // 不记录或传播原始异常正文，避免供应商异常、参数和凭据进入运行日志。
-            run.transitionTo(RunStatus.FAILED, Instant.now(), FailureCategory.UNKNOWN);
-            persist(run);
+            RunStatus terminalStatus;
+            FailureCategory terminalCategory;
+            RunControl control = runControls.get(run.runId());
+            synchronized (control) {
+                boolean cancelled = control.cancellationRequested();
+                terminalStatus = cancelled ? RunStatus.CANCELLED : RunStatus.FAILED;
+                terminalCategory = cancelled ? FailureCategory.CANCELLED : FailureCategory.UNKNOWN;
+                run.transitionTo(terminalStatus, Instant.now(), terminalCategory);
+                persist(run);
+            }
             log.error("runId={} status={} failureCategory={} exceptionType={}", run.runId(), run.status(),
-                    FailureCategory.UNKNOWN, unexpected.getClass().getSimpleName());
+                    terminalCategory, unexpected.getClass().getSimpleName());
             return run;
         }
     }
@@ -259,29 +295,38 @@ public final class AgentRuntime {
     private ModelResponse callModelUntilDeadline(RunRecord run) throws ModelClientException, WorkflowAbort {
         FutureTask<ModelResponse> task = new FutureTask<>(
                 () -> modelClient.complete(run.messages(), registry.definitions()));
+        RunControl control = runControls.get(run.runId());
+        control.setActiveModelTask(task);
         Thread.ofVirtual().name("agent-model-" + run.runId()).start(task);
-        while (true) {
-            checkCancelled(run);
-            long remaining = Duration.between(Instant.now(), run.deadlineAt()).toMillis();
-            if (remaining <= 0) {
-                task.cancel(true);
-                throw new ModelClientException(FailureCategory.MODEL_TIMEOUT, true);
+        try {
+            while (true) {
+                checkCancelled(run);
+                long remaining = Duration.between(Instant.now(), run.deadlineAt()).toMillis();
+                if (remaining <= 0) {
+                    task.cancel(true);
+                    throw new ModelClientException(FailureCategory.MODEL_TIMEOUT, true);
+                }
+                try {
+                    return task.get(Math.min(MODEL_WAIT_SLICE_MILLIS, remaining), TimeUnit.MILLISECONDS);
+                } catch (TimeoutException waiting) {
+                    // 以短间隔轮询，以便取消请求可以尽快中断模型等待。
+                } catch (InterruptedException interrupted) {
+                    task.cancel(true);
+                    Thread.currentThread().interrupt();
+                    throw new WorkflowAbort(FailureCategory.CANCELLED);
+                } catch (CancellationException cancelled) {
+                    throw new WorkflowAbort(FailureCategory.CANCELLED);
+                } catch (ExecutionException failed) {
+                    Throwable cause = failed.getCause();
+                    if (cause instanceof ModelClientException modelFailure) throw modelFailure;
+                    throw new ModelClientException(FailureCategory.MODEL_UNKNOWN, false);
+                }
             }
-            try {
-                return task.get(Math.min(MODEL_WAIT_SLICE_MILLIS, remaining), TimeUnit.MILLISECONDS);
-            } catch (TimeoutException waiting) {
-                // 以短间隔轮询，以便取消请求可以尽快中断模型等待。
-            } catch (InterruptedException interrupted) {
-                task.cancel(true);
-                Thread.currentThread().interrupt();
-                throw new WorkflowAbort(FailureCategory.CANCELLED);
-            } catch (CancellationException cancelled) {
-                throw new WorkflowAbort(FailureCategory.CANCELLED);
-            } catch (ExecutionException failed) {
-                Throwable cause = failed.getCause();
-                if (cause instanceof ModelClientException modelFailure) throw modelFailure;
-                throw new ModelClientException(FailureCategory.MODEL_UNKNOWN, false);
-            }
+        } catch (WorkflowAbort abort) {
+            if (abort.category == FailureCategory.CANCELLED) task.cancel(true);
+            throw abort;
+        } finally {
+            control.clearActiveModelTask(task);
         }
     }
 
@@ -374,8 +419,8 @@ public final class AgentRuntime {
     }
 
     private void checkCancelled(RunRecord run) throws WorkflowAbort {
-        AtomicBoolean requested = cancellationRequests.get(run.runId());
-        if (requested != null && requested.get()) throw new WorkflowAbort(FailureCategory.CANCELLED);
+        RunControl control = runControls.get(run.runId());
+        if (control != null && control.cancellationRequested()) throw new WorkflowAbort(FailureCategory.CANCELLED);
     }
 
     private void persist(RunRecord run) {
@@ -386,5 +431,28 @@ public final class AgentRuntime {
     private static final class WorkflowAbort extends Exception {
         private final FailureCategory category;
         private WorkflowAbort(FailureCategory category) { this.category = category; }
+    }
+
+    /** 运行期协调状态；终态提交与取消请求共用同一把锁，避免彼此覆盖。 */
+    private static final class RunControl {
+        private boolean active;
+        private boolean cancellationRequested;
+        private FutureTask<?> activeModelTask;
+
+        synchronized void requestCancellation() {
+            cancellationRequested = true;
+            if (activeModelTask != null) activeModelTask.cancel(true);
+        }
+
+        synchronized boolean cancellationRequested() { return cancellationRequested; }
+
+        synchronized void setActiveModelTask(FutureTask<?> task) {
+            activeModelTask = task;
+            if (cancellationRequested) task.cancel(true);
+        }
+
+        synchronized void clearActiveModelTask(FutureTask<?> task) {
+            if (activeModelTask == task) activeModelTask = null;
+        }
     }
 }
