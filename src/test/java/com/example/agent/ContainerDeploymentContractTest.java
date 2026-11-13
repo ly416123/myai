@@ -144,6 +144,9 @@ class ContainerDeploymentContractTest {
         String proxyAcl = Files.readString(Path.of("ops/squid-model-egress.conf"));
         assertTrue(proxy.contains("registry.example.invalid/myai-model-egress-proxy"));
         assertTrue(proxyAcl.contains("api.deepseek.com"));
+        assertTrue(proxyAcl.contains("acl deepseek_api dstdomain api.deepseek.com"));
+        assertFalse(proxyAcl.contains("dstdomain .api.deepseek.com"),
+                "A leading dot would widen the allow-list to provider subdomains");
         assertTrue(proxyAcl.contains("http_access deny all"));
         assertTrue(policies.contains("cidr: 0.0.0.0/0"));
         assertTrue(policies.contains("              - 10.0.0.0/8"));
