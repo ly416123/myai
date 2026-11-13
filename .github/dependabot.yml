@@ -7,3 +7,17 @@ updates:
     labels:
       - dependencies
       - ci
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - containers
+  - package-ecosystem: docker
+    directory: /ops
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - containers

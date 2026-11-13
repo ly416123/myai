@@ -12,6 +12,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ContainerDeploymentContractTest {
     @Test
+    void dockerBaseImagesAreDigestPinnedAndMonitoredForUpdates() throws Exception {
+        String runtimeDockerfile = Files.readString(Path.of("Dockerfile"));
+        String proxyDockerfile = Files.readString(Path.of("ops/egress-proxy.Dockerfile"));
+        String dependabot = Files.readString(Path.of(".github/dependabot.yml"));
+
+        assertTrue(runtimeDockerfile.lines().anyMatch(line ->
+                line.matches("FROM eclipse-temurin:21-jre@sha256:[a-f0-9]{64}")));
+        assertTrue(proxyDockerfile.lines().anyMatch(line ->
+                line.matches("FROM ubuntu:26\\.04@sha256:[a-f0-9]{64}")));
+        assertTrue(dependabot.matches("(?s).*package-ecosystem: docker\\s+directory: /\\s+schedule:\\s+interval: weekly.*"));
+        assertTrue(dependabot.matches("(?s).*package-ecosystem: docker\\s+directory: /ops\\s+schedule:\\s+interval: weekly.*"));
+    }
+
+    @Test
     void imageBuildCannotCopyLocalCredentialsAndRunsAsNonRoot() throws Exception {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
         String ignore = Files.readString(Path.of(".dockerignore"));

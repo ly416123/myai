@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre@sha256:18bb4a91a3dea3f03ee31d3755af34dfb40f904fc77ab56cdc2f092e32fff9c2
 ARG UBUNTU_REPOSITORY=ports.ubuntu.com/ubuntu-ports
 RUN sed -i "s#ports.ubuntu.com/ubuntu-ports#${UBUNTU_REPOSITORY}#g" /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
