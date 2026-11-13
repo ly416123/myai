@@ -23,6 +23,8 @@ class ContainerDeploymentContractTest {
                 line.matches("FROM ubuntu:26\\.04@sha256:[a-f0-9]{64}")));
         assertTrue(dependabot.matches("(?s).*package-ecosystem: docker\\s+directory: /\\s+schedule:\\s+interval: weekly.*"));
         assertTrue(dependabot.matches("(?s).*package-ecosystem: docker\\s+directory: /ops\\s+schedule:\\s+interval: weekly.*"));
+        assertTrue(dependabot.matches("(?s).*package-ecosystem: docker\\s+directory: /deploy/k8s/base\\s+schedule:\\s+interval: weekly.*"),
+                "Third-party image tags in Kubernetes manifests must be monitored for updates");
     }
 
     @Test

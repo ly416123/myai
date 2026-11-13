@@ -21,3 +21,10 @@ updates:
     labels:
       - dependencies
       - containers
+  - package-ecosystem: docker
+    directory: /deploy/k8s/base
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - containers

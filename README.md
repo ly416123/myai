@@ -193,7 +193,7 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 ## CI 安全扫描
 
-GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。两个 Dockerfile 的基础镜像均固定到多架构 OCI manifest digest，Dependabot 每周检查根目录和 `ops/` 中的 Docker 基础镜像更新；镜像升级应审阅摘要变化并通过 CI 镜像扫描。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
+GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。两个 Dockerfile 的基础镜像均固定到多架构 OCI manifest digest，Dependabot 每周检查根目录、`ops/` 中的 Dockerfile 基础镜像，以及 `deploy/k8s/base/` 中 Kubernetes 清单引用的镜像标签。Dependabot 仅创建待审阅的更新 PR，不会自动部署；合并前仍需审阅摘要变化并通过 CI 镜像扫描。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
 
 CI 在 Java 构建前还会运行 Actionlint 检查 GitHub Actions 工作流语法和常见配置错误。Actionlint 固定为 v1.7.12 Linux amd64，并校验官方发布归档 SHA-256 后才执行；本地也可下载相同版本检查：`actionlint -color .github/workflows/ci.yml`。远端工作流仍需在获准推送后由 GitHub Actions 实际运行验收。
 
