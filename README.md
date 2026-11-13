@@ -24,7 +24,7 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 `l5` 指 `ly@192.168.122.55`。2026-11-13 复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致。轮换前控制面恢复包保存在本机 age 加密归档中；SQLite 一致性快照完整，28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
 
-MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector 与 Prometheus，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus 和 PostgreSQL 均 Ready。Prometheus 抓取应用与 Hikari 指标。用户决定移除 MyAI PostgreSQL 备份功能后，L5 CronJob 已删除，kube-state-metrics 及其专用 RBAC、网络策略和镜像也已移除；Prometheus 保留 5 条应用运行告警规则。此前创建的 `myai-postgres-backups` 5Gi PVC 与其中归档数据保留，但已不在部署清单中且没有备份 Job 挂载它；未删除归档数据。MyAI 当前不提供自动或手动数据库备份/恢复功能，PostgreSQL 没有应用级备份保障。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。可通过 `kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-prometheus 9090:9090` 后访问 `http://localhost:9090/consoles/agent-overview.html`。PostgreSQL 和 Prometheus 使用各自 5Gi local-path PVC。L5 是单节点环境，这些卷不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。旧 namespace 和 PVC 均未复用、删除。
+MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector 与 Prometheus，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus 和 PostgreSQL 均 Ready。Prometheus 抓取应用与 Hikari 指标，保留 5 条应用运行告警规则。MyAI 不提供数据库备份/恢复能力；PostgreSQL 数据卷或单节点损坏可能导致 Run 与检查点丢失。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。可通过 `kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-prometheus 9090:9090` 后访问 `http://localhost:9090/consoles/agent-overview.html`。PostgreSQL 和 Prometheus 使用各自 5Gi local-path PVC。L5 是单节点环境，这些卷不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。旧 namespace 和 PVC 均未复用、删除。
 
 L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数据持久化限制见[运维手册](docs/operations/l5-runbook.md)。
 
@@ -68,10 +68,6 @@ CLI 可使用 `/enqueue <任务>` 或 `/multi-enqueue <任务>` 将 Run 以 `CRE
 
 若明确要清理本地 PostgreSQL 开发数据，可使用 `docker compose down -v`；这会删除 Compose 命名卷中的全部本地 Run 数据。
 
-### 数据备份范围
-
-按项目决策，MyAI 的 PostgreSQL 自动备份、手动备份/恢复脚本、备份镜像、定时 Job 和相关监控均已移除。L5 曾生成的归档 PVC 仍保留，未删除其中数据；该 PVC 已从部署清单移出，也不会继续写入或自动清理。当前数据库没有应用级备份或恢复流程，因此 PostgreSQL PVC/节点损坏可能导致 Run 与检查点不可恢复。请勿将保留归档 PVC 视为可用的灾备方案；如需重新建立备份策略，应另行明确存储故障域、密钥托管、保留期限和恢复目标。
-
 CLI 命令：
 
 - 输入普通文本：开始一个新 Run。
@@ -93,7 +89,7 @@ CLI 命令：
 
     mvn clean test
 
-Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus，5 条应用告警规则均已加载；备份专用的 kube-state-metrics 与规则已移除。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；Trivy HIGH CVE-2026-78661 仍为已知未修复风险。
+Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus，5 条应用告警规则均已加载。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；Trivy HIGH CVE-2026-78661 仍为已知未修复风险。
 
 ## Workflow 状态与恢复语义
 
@@ -117,7 +113,7 @@ PostgreSQL claim 使用数据库条件更新，租约到期后新 owner 获得�
 
 恢复时只执行 PENDING 工具。发现旧进程留下的 IN_PROGRESS 工具步骤时，系统将其视为结果未知，记录 INDETERMINATE，把“未自动重放”的错误结果交回模型，绝不默默重放。工具收到中断不等于外部副作用已经撤销；没有工具端幂等键或事务协议时，本项目不保证 exactly-once。模型请求没有工具副作用，若进程在请求中退出，恢复可能重发该请求并产生重复模型费用。
 
-检查点需要保存消息历史和待执行工具请求，所以 PostgreSQL 检查点可能包含用户输入、模型文本、工具参数和工具结果。运行步骤/日志不会记录完整工具参数或原始异常内容；API Key 不属于 RunRecord。L5 已为 PostgreSQL 与应用 Worker 启用证书校验 TLS；仍需落实组织级 CA 私钥托管/轮换、数据库访问控制、实际 Run 保留周期和用户删除请求处理。此前的 PostgreSQL 备份功能已按项目决策移除，旧归档 PVC 保留但不属于当前运行保障。
+检查点需要保存消息历史和待执行工具请求，所以 PostgreSQL 检查点可能包含用户输入、模型文本、工具参数和工具结果。运行步骤/日志不会记录完整工具参数或原始异常内容；API Key 不属于 RunRecord。L5 已为 PostgreSQL 与应用 Worker 启用证书校验 TLS；仍需落实组织级 CA 私钥托管/轮换、数据库访问控制、实际 Run 保留周期和用户删除请求处理。
 
 ## 预算、重试与错误
 
@@ -199,4 +195,6 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
 
-备份功能移除后的验收结果：`mvn --batch-mode --no-transfer-progress -Dtest=ContainerDeploymentContractTest test` 11/11 通过；`DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock TESTCONTAINERS_RYUK_DISABLED=true mvn --batch-mode --no-transfer-progress clean verify` BUILD SUCCESS，157 项通过、0 失败/错误/跳过，含 PostgreSQL 与 OTLP Collector Testcontainers。`bash ops/tests/prometheus-alerts-test.sh` 使用 L5 同版 Prometheus 的 `promtool` 返回 SUCCESS；`kubectl apply --dry-run=server -k deploy/overlays/l5` 成功。L5 CronJob、备份配置及 kube-state-metrics 已删除，Prometheus 保留 5 条应用告警；`myai-postgres-backups` PVC 保留，不在清单中且不再挂载。此前的备份与隔离恢复结果属于历史验证，不代表当前存在备份/恢复能力。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 镜像有一项未修复 HIGH（CVE-2026-78661），按用户决定继续保留该版本。企业升级的已完成/待办边界见[路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。
+CI 在 Java 构建前还会运行 Actionlint 检查 GitHub Actions 工作流语法和常见配置错误。Actionlint 固定为 v1.7.12 Linux amd64，并校验官方发布归档 SHA-256 后才执行；本地也可下载相同版本检查：`actionlint -color .github/workflows/ci.yml`。远端工作流仍需在获准推送后由 GitHub Actions 实际运行验收。
+
+本地 Maven 构建、Prometheus 告警规则与 L5 部署契约的最近验收记录，见[企业升级路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 镜像有一项未修复 HIGH（CVE-2026-78661），按用户决定继续保留该版本。

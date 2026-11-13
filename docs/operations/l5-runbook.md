@@ -6,9 +6,9 @@
 
 最近核对时间：2026-11-13。
 
-- 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。此前生成的归档 PVC 保留但不属于当前运行保障。
+- 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。
 - Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
-- PostgreSQL 16 使用 5 GiB `local-path` PVC。按项目决策，备份/恢复脚本、定时 CronJob 和归档监控已移除；此前归档 PVC 与数据保留但不挂载、不再更新或清理。当前数据库没有应用级备份与恢复保障。CA 签名私钥托管尚未建设。
+- PostgreSQL 16 使用 5 GiB `local-path` PVC。当前没有数据库备份与恢复流程；卷或节点损坏可能导致 Run 与检查点丢失。CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
 - L5 Prometheus 保留告警规则和本地状态，但没有 Alertmanager 或通知接收端。告警阈值是运维默认值，不是已批准的业务 SLO。
@@ -100,7 +100,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
 1. 检查 `myai-postgres-0` 事件、日志、PVC 状态及节点磁盘容量。
 2. 暂停新任务提交；不要删除 PVC、强删数据库 Pod 或手工修改 Run 表。
 3. 数据库恢复后确认 PostgreSQL Ready、Flyway/Worker 连接恢复，并观察租约接管。短暂数据库中断演练已有成功证据，但这不覆盖磁盘损坏或节点丢失。
-4. 如果怀疑数据损坏，先保留现场并停止进一步写入。当前没有受支持的 MyAI 数据库备份/恢复流程；此前归档 PVC 虽保留但未经当前恢复流程验证，不应当作可恢复承诺。
+4. 如果怀疑数据损坏，先保留现场并停止进一步写入。当前没有受支持的 MyAI 数据库备份/恢复流程；节点或存储故障造成的数据丢失没有应用级恢复路径。
 
 ### Collector 或 Prometheus 不可用
 
@@ -152,4 +152,4 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
   mvn --batch-mode --no-transfer-progress clean verify
   ```
 - 当前 L5 单节点和同节点 PVC 不提供节点故障恢复目标；RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
-- 当前不提供 PostgreSQL 备份/恢复能力；原归档 PVC 保留但不纳入清单、不挂载且未经恢复演练。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。
+- 当前不提供 PostgreSQL 备份/恢复能力。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。

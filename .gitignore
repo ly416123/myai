@@ -52,11 +52,6 @@ bin/
 # Evaluation reports contain model outputs and are local runtime data
 /var/agent-evaluations/
 
-# Database backups contain sensitive Run payloads even when encrypted
-/backups/
-/ops/backups/
 /ops/.build/
 **/__pycache__/
 *.py[cod]
-*.dump.age
-*.dump.age.sha256

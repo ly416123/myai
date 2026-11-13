@@ -9,7 +9,3 @@ deepseek.key
 *.log
 data/
 runtime-data/
-backups/
-ops/backups/
-*.dump.age
-*.dump.age.sha256

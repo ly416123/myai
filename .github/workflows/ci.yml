@@ -15,6 +15,21 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Lint GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
+            -o "${temp_dir}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${temp_dir}/${archive}" | sha256sum --check -
+          tar -xzf "${temp_dir}/${archive}" -C "${temp_dir}" actionlint
+          "${temp_dir}/actionlint" -color
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin

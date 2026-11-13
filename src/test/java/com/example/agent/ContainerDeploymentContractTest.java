@@ -13,6 +13,7 @@ class ContainerDeploymentContractTest {
     void imageBuildCannotCopyLocalCredentialsAndRunsAsNonRoot() throws Exception {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
         String ignore = Files.readString(Path.of(".dockerignore"));
+        String gitignore = Files.readString(Path.of(".gitignore"));
 
         assertTrue(dockerfile.contains("USER 10001:10001"));
         assertTrue(dockerfile.contains("COPY target/minimal-agent-runtime-1.0-SNAPSHOT.jar /app/app.jar"));
@@ -20,7 +21,10 @@ class ContainerDeploymentContractTest {
         assertFalse(dockerfile.contains("COPY . ."));
         assertTrue(ignore.contains("deepseek.key"));
         assertTrue(ignore.contains(".env"));
-        assertTrue(ignore.contains("*.dump.age"));
+        assertFalse(ignore.contains("backup"));
+        assertFalse(ignore.contains("*.dump.age"));
+        assertFalse(gitignore.contains("backup"));
+        assertFalse(gitignore.contains("*.dump.age"));
     }
 
     @Test
@@ -216,6 +220,11 @@ class ContainerDeploymentContractTest {
         assertTrue(dependabot.contains("interval: weekly"));
         assertTrue(workflow.contains("persist-credentials: false"),
                 "Checkout must not persist the workflow token in the repository config");
+        assertTrue(workflow.contains("ACTIONLINT_VERSION: 1.7.12"));
+        assertTrue(workflow.contains("ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"),
+                "Workflow lint tool must be pinned by an independently verified archive checksum");
+        assertTrue(workflow.contains("${temp_dir}/actionlint\" -color"),
+                "CI must lint the workflow source before application build and publish jobs");
     }
 
     @Test
