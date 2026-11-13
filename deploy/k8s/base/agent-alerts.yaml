@@ -54,3 +54,12 @@ groups:
         annotations:
           summary: Agent database connection pool is near capacity
           description: Review worker concurrency and database pool sizing.
+
+      - alert: AgentWorkerPollingFailures
+        expr: sum(increase(myai_agent_worker_poll_failures_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent worker cannot poll its persistent queue
+          description: Check PostgreSQL availability and worker readiness; repeated polling failures may delay queued Runs.

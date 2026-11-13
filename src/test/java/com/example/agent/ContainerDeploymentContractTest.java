@@ -105,6 +105,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentExpiredRunLeases"));
         assertTrue(rules.contains("myai_agent_worker_lease_expired_leases"));
         assertTrue(rules.contains("AgentRecentRunFailures"));
+        assertTrue(rules.contains("AgentWorkerPollingFailures"));
+        assertTrue(rules.contains("myai_agent_worker_poll_failures_total"));
         assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
         assertTrue(rules.contains("myai_agent_worker_queue_oldest_seconds"));

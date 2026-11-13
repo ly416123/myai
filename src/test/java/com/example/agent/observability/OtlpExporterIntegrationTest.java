@@ -61,9 +61,10 @@ class OtlpExporterIntegrationTest {
             "myai_agent_worker_queue_oldest_seconds",
             "myai_agent_worker_lease_expired_leases",
             "myai_agent_worker_run_failed_recent_runs",
+            "myai_agent_worker_poll_failures_total",
             "myai_hikaricp_connections_active",
             "myai_hikaricp_connections_max");
-    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "max", "or", "sum", "time", "up");
+    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "increase", "max", "or", "sum", "time", "up");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
@@ -122,6 +123,7 @@ class OtlpExporterIntegrationTest {
     @Test
     void exportsTelemetryAndAlertMetricNamesThroughOtlpCollector() throws Exception {
         telemetry.recordQueueSnapshot(new RunQueueSnapshot(7, 2, 3, Duration.ofSeconds(45)));
+        telemetry.recordWorkerPollFailure();
         assertNotNull(meters.find("hikaricp.connections.active").gauge(), "Hikari pool gauges must be bound locally");
         meters.counter("agent.otlp.export.probe").increment();
         Observation.createNotStarted("myai.otlp.export.probe", observations).start().stop();
@@ -149,7 +151,8 @@ class OtlpExporterIntegrationTest {
         for (String line : Files.readAllLines(Path.of("deploy/k8s/base/agent-alerts.yaml"))) {
             String trimmed = line.trim();
             if (!trimmed.startsWith("expr:")) continue;
-            String expression = trimmed.substring("expr:".length()).replaceAll("\\{[^}]*}", " ");
+            String expression = trimmed.substring("expr:".length()).replaceAll("\\{[^}]*}", " ")
+                    .replaceAll("\\b\\d+(ms|s|m|h|d|w|y)\\b", " ");
             Matcher matcher = tokenPattern.matcher(expression);
             while (matcher.find()) expressionTokens.add(matcher.group());
         }

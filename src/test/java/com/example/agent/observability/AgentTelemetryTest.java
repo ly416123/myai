@@ -126,6 +126,19 @@ class AgentTelemetryTest {
     }
 
     @Test
+    void recordsWorkerPollFailuresWithoutHighCardinalityTags() {
+        var meters = new SimpleMeterRegistry();
+        var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());
+
+        telemetry.recordWorkerPollFailure();
+        telemetry.recordWorkerPollFailure();
+
+        var counter = meters.get("agent.worker.poll.failures").counter();
+        assertEquals(2.0, counter.count());
+        assertTrue(counter.getId().getTags().isEmpty());
+    }
+
+    @Test
     void recordsStepMetricsWithBoundedTagsAndActualTokenUsage() {
         var meters = new SimpleMeterRegistry();
         var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());

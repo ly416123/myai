@@ -96,6 +96,7 @@ public final class RunPollingWorker implements AutoCloseable {
             livenessFile.recordHeartbeat();
             pollOnce();
         } catch (RuntimeException failure) {
+            telemetry.recordWorkerPollFailure();
             log.warn("runWorker=poll_failed exceptionType={}", failure.getClass().getSimpleName());
         }
     }

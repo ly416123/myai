@@ -138,6 +138,11 @@ public final class AgentTelemetry {
             Timer.builder("agent.worker.queue.wait").tag("run_type", type).register(meters).record(queueWait);
     }
 
+    /** Records a failed background poll without attaching exception text or unbounded identifiers. */
+    public void recordWorkerPollFailure() {
+        if (meters != null) meters.counter("agent.worker.poll.failures").increment();
+    }
+
     /** Updates aggregate worker backlog gauges; no per-run identifiers are attached to metrics. */
     public void recordQueueSnapshot(RunQueueSnapshot snapshot) {
         if (snapshot == null) throw new IllegalArgumentException("Queue snapshot is required");

@@ -10,15 +10,47 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 import com.example.agent.observability.AgentTelemetry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class RunPollingWorkerTest {
     @TempDir
     Path tempDirectory;
+
+    @Test
+    void countsDatabasePollingFailuresWithoutKillingWorkerProcess() throws Exception {
+        CountDownLatch polled = new CountDownLatch(1);
+        RunStore unavailable = mock(RunStore.class);
+        when(unavailable.queueSnapshot(any())).thenAnswer(invocation -> {
+            polled.countDown();
+            throw new RunStoreUnavailableException(new IllegalStateException("sensitive connection detail"));
+        });
+        var meters = new SimpleMeterRegistry();
+        var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());
+        Path ready = tempDirectory.resolve("worker-ready");
+        Path live = tempDirectory.resolve("worker-live");
+
+        try (RunPollingWorker worker = new RunPollingWorker(unavailable, run -> run, 1, Duration.ofSeconds(10),
+                telemetry, new WorkerHealthFile(ready), new WorkerHealthFile(live))) {
+            worker.start();
+
+            assertTrue(polled.await(2, TimeUnit.SECONDS));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (meters.find("agent.worker.poll.failures").counter() == null
+                    && System.nanoTime() < deadline) Thread.sleep(5);
+            assertEquals(1.0, meters.get("agent.worker.poll.failures").counter().count());
+            assertFalse(new WorkerHealthFile(ready).isFresh(Duration.ofSeconds(15)));
+            assertTrue(new WorkerHealthFile(live).isFresh(Duration.ofSeconds(15)));
+            assertTrue(meters.get("agent.worker.poll.failures").counter().getId().getTags().isEmpty());
+        }
+    }
 
     @Test
     void pollRefreshesBacklogAndExpiredLeaseGaugesFromStoreSnapshot() throws Exception {

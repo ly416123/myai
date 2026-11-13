@@ -18,6 +18,8 @@ tests:
         values: "1+0x20"
       - series: myai_agent_worker_run_failed_recent_runs
         values: "1+0x20"
+      - series: myai_agent_worker_poll_failures_total
+        values: "1+1x20"
       - series: myai_hikaricp_connections_active
         values: "10+0x20"
       - series: myai_hikaricp_connections_max
@@ -40,6 +42,9 @@ tests:
         exp_alerts: []
       - eval_time: 30s
         alertname: AgentDatabasePoolNearCapacity
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentWorkerPollingFailures
         exp_alerts: []
       - eval_time: 2m
         alertname: MyAiCollectorTargetDown
@@ -90,6 +95,14 @@ tests:
             exp_annotations:
               summary: Agent database connection pool is near capacity
               description: Review worker concurrency and database pool sizing.
+      - eval_time: 2m
+        alertname: AgentWorkerPollingFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Agent worker cannot poll its persistent queue
+              description: Check PostgreSQL availability and worker readiness; repeated polling failures may delay queued Runs.
 
   - name: thresholds do not fire at boundary
     interval: 30s
@@ -103,6 +116,8 @@ tests:
       - series: myai_agent_worker_lease_expired_leases
         values: "0+0x20"
       - series: myai_agent_worker_run_failed_recent_runs
+        values: "0+0x20"
+      - series: myai_agent_worker_poll_failures_total
         values: "0+0x20"
       - series: myai_hikaricp_connections_active
         values: "9+0x20"
@@ -126,4 +141,7 @@ tests:
         exp_alerts: []
       - eval_time: 10m
         alertname: AgentDatabasePoolNearCapacity
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentWorkerPollingFailures
         exp_alerts: []

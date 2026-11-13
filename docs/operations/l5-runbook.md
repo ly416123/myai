@@ -80,7 +80,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前 6 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 7 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟，以及 Worker 轮询失败计数在 5 分钟内增加并持续 1 分钟。Worker 轮询失败只记录无标签计数，不记录异常正文；该信号用于发现进程仍运行但数据库队列轮询连续失败的情况。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
