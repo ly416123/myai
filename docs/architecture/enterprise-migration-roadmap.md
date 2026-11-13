@@ -2,7 +2,7 @@
 
 **文档状态：** 实施中（2026-11-13 更新）。当前已交付 Spring Boot 模块化单体、PostgreSQL/Flyway RunStore、带租约与 fencing 的多 Worker 协调、Supervisor–Worker、Micrometer/OTel、Provider 契约、Testcontainers、K3s 部署和确定性评测。MyAI 不提供数据库备份/恢复功能；L5 归档 PVC、历史备份 Job/Pod 与关联持久卷已删除，Prometheus 保留 5 条应用告警规则，通知投递仍暂缓。数据库数据卷或单节点损坏可能导致 Run 与检查点丢失。此前的备份恢复演练属于功能存在期间的历史事实，不代表当前能力；最新验收结果见文档末尾实施记录。单节点 L5 仍不是高可用环境。
 
-**范围决定：短期不交付 HTTP API 和生产身份认证/授权。数据库备份/恢复功能和 L5 遗留归档数据已删除。CA 签名密钥故障/托管方案和告警通知投递暂缓；Prometheus 应用规则与本地告警状态继续保留。其余路线图交付项继续推进。Fake/Mock 仅用于自动化测试，不用于生产装配。** 当前未收尾项包括：新增外部副作用工具前需定义幂等/补偿协议、业务 SLO 与数据分类/保留期限、远端 GitHub CI 验收。当前三项演示工具为本地计算、时间查询和模拟天气，不产生外部副作用；运行中断后未知结果的工具步骤不会自动重放。Prometheus v3.16.0 按用户决定继续使用，不再投入升级工作；其 Trivy HIGH CVE-2026-78661 作为已知风险保留记录。
+**范围决定：短期不交付 HTTP API 和生产身份认证/授权。数据库备份/恢复功能和 L5 遗留归档数据已删除。CA 签名密钥故障/托管方案和告警通知投递暂缓；Prometheus 应用规则与本地告警状态继续保留。其余路线图交付项继续推进。Fake/Mock 仅用于自动化测试，不用于生产装配。** 当前未收尾项包括：持久化、可查询的 Trace 后端；新增外部副作用工具前定义幂等/补偿协议；业务 SLO 与数据分类/保留期限；远端 GitHub CI 验收。当前三项演示工具为本地计算、时间查询和模拟天气，不产生外部副作用；运行中断后未知结果的工具步骤不会自动重放。Prometheus v3.16.0 按用户决定继续使用，不再投入升级工作；其 Trivy HIGH CVE-2026-78661 作为已知风险保留记录。
 ## 1. 结论
 
 MyAi 的目标是企业级 Agent Runtime。阶段 1–3 形成了可运行的核心循环、运行状态和 Supervisor–Worker 协作，但早期为控制复杂度采用的 CLI、本地 JSON Store、单进程调度和本地日志，不具备多实例生产运行所需的持久化一致性、集中可观测和运维能力。
@@ -94,7 +94,7 @@ Run 消息和工具参数可能包含个人信息、密钥或业务数据。当�
 - **追踪：** OpenTelemetry Trace 串联入口、规划、Worker、模型适配器、工具和数据库调用；模型提示词/响应默认不作为 Span 属性。
 - **告警：** 先基于服务可用性、错误率、P95 延迟、数据库连接池、任务积压/租约超时和模型失败率定义 SLO 与告警阈值，再决定 Prometheus/Grafana 或现有集中平台。
 
-L5 实际已运行单副本 Collector 与 Prometheus 作为受控集成验证环境；Prometheus 仅 ClusterIP、持久化 7 天。按移除备份功能的项目决策，KSM 部署、抓取目标和备份告警已删除，当前保留的五条规则覆盖 Collector 可用性、队列等待、过期租约、近期失败 Run 和连接池容量。队列、过期租约和 Hikari 告警表达式使用 Collector 实际导出的 `myai_` 指标前缀；本地契约测试锁定这些名称。Prometheus 提供一个自定义内置控制台 `/consoles/agent-overview.html`，显示队列深度、最老等待时间、过期租约数、过去 5 分钟失败 Run 数和连接池用量，不需要增加 Grafana 镜像。它不提供 HA、Grafana 仪表盘、外部集中后端或告警接收。L5 操作级运维手册已覆盖只读诊断、告警查看、租约恢复原则、Worker 回滚及当前无数据库备份/恢复能力的边界；生产环境操作流程仍需结合目标架构、业务 SLO、数据治理和正式灾备要求完善。生产标签/聚合、业务 SLO 与告警路由未确认/交付。Prometheus v3.16.0 的 Trivy HIGH CVE-2026-78661 仍存在；用户已选择保留当前版本，不再投入升级工作。
+L5 实际已运行单副本 Collector 与 Prometheus 作为受控集成验证环境；Prometheus 仅 ClusterIP、持久化 7 天。按移除备份功能的项目决策，KSM 部署、抓取目标和备份告警已删除，当前保留的五条规则覆盖 Collector 可用性、队列等待、过期租约、近期失败 Run 和连接池容量。队列、过期租约和 Hikari 告警表达式使用 Collector 实际导出的 `myai_` 指标前缀；本地契约测试锁定这些名称。Prometheus 提供一个自定义内置控制台 `/consoles/agent-overview.html`，显示队列深度、最老等待时间、过期租约数、过去 5 分钟失败 Run 数和连接池用量。L5 Worker 已向 OTel Collector 发送 Trace，但 Collector 当前使用 `debug` exporter 的 `basic` 模式，只记录批次摘要，不持久保存或按 Trace ID 查询；持久 Trace 后端与查询界面仍待决。当前平台不提供 HA、外部集中指标后端或告警接收。L5 操作级运维手册已覆盖只读诊断、告警查看、Trace 信号检查、租约恢复原则、Worker 回滚及当前无数据库备份/恢复能力的边界；生产环境操作流程仍需结合目标架构、业务 SLO、数据治理和正式灾备要求完善。生产标签/聚合、业务 SLO 与告警路由未确认/交付。Prometheus v3.16.0 的 Trivy HIGH CVE-2026-78661 仍存在；用户已选择保留当前版本，不再投入升级工作。
 
 Run Observation 已在单 Agent 与 Supervisor 执行期间保持 scope；模型调用的虚拟线程显式恢复步骤上下文。本地并行 Worker 有独立步骤 Observation，模型与工具 span 可形成 `Run → Worker → Model/Tool` 层级；确定性回归测试验证 Run/Worker/Model 父子关系。独立 `separateTaskWorkers` 已在子任务检查点中持久化 W3C `traceparent`/`tracestate`；领取任务的新 Worker 恢复远端父上下文，使 `Run → Worker → Model/Tool` 跨进程保持同一 Trace。实现不传播 baggage，以免把业务敏感值写入任务元数据。JDBC 查询已通过 Datasource Micrometer 1.5.0 与 OpenTelemetry 语义映射生成 query span，仅开启 QUERY 观测，参数值明确关闭导出，SQL 字面量分析和脱敏开启，查询日志关闭；Testcontainers 集成测试检查 Collector 确实收到数据库 span 并且敏感参数/字面量没有出现在导出 Trace 中。跨进程 Trace Context 已在本次迭代实现并经确定性 Trace 层级与 PostgreSQL JSONB 往返测试验证。
 

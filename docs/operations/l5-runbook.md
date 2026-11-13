@@ -7,7 +7,8 @@
 最近核对时间：2026-11-13。
 
 - 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
+- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261113-jdbc-trace`；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
+- Worker 已向 OTel Collector 发送 Trace。Collector 目前使用 `debug` exporter 的 `basic` 模式，只在日志中输出批次摘要，不提供持久保存或按 Trace ID 查询；当前没有 Tempo、Grafana 或外部 Trace 后端。
 - PostgreSQL 16 使用 5 GiB `local-path` PVC。当前没有数据库备份与恢复流程；卷或节点损坏可能导致 Run 与检查点丢失。CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
@@ -106,7 +107,15 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
 
 1. 检查对应 Pod、事件、日志与 Prometheus Targets API；Prometheus 是单副本，升级/重启期间本地查询可能短暂不可用。
 2. 规则健康与告警状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，Pending/Firing 状态需要人工查看。
-3. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
+3. 只读检查 Trace 信号是否到达 Collector：
+
+   ```bash
+   kubectl --context "$CTX" -n "$NS" logs deploy/myai-otel-collector --since=1h \
+     | grep -F 'otelcol.signal' | grep -F 'traces' | tail
+   ```
+
+   `debug` exporter 的 `basic` 模式只显示收到的 span 批次数量，不包含可查询的 Trace 详情。若没有匹配日志，检查 Worker 的 OTLP Trace 配置、Pod 日志和 Collector 状态；不要据此重放 Run。
+4. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
 
 ## 5. Worker 版本回滚
 
