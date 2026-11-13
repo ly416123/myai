@@ -12,6 +12,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: myai-agent
+        app.kubernetes.io/component: task
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

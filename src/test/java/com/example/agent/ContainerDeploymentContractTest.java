@@ -112,6 +112,30 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
+    void myaiNamespaceIngressIsDefaultDeniedAndOnlyKnownServiceFlowsAreAllowed() throws Exception {
+        String policies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
+        String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
+        String taskJob = Files.readString(Path.of("deploy/k8s/base/agent-task-job.yaml"));
+
+        assertTrue(kustomization.contains("base/network-policies.yaml"));
+        assertTrue(policies.contains("name: myai-default-deny-ingress"));
+        assertTrue(policies.contains("policyTypes: [Ingress]"));
+        assertTrue(policies.contains("name: myai-postgres-ingress"));
+        assertTrue(policies.contains("port: 5432"));
+        assertTrue(policies.contains("component: worker"));
+        assertTrue(policies.contains("component: task"));
+        assertTrue(policies.contains("component: backup"));
+        assertTrue(policies.contains("name: myai-collector-ingress"));
+        assertTrue(policies.contains("port: 4317"));
+        assertTrue(policies.contains("port: 4318"));
+        assertTrue(policies.contains("port: 9464"));
+        assertTrue(policies.contains("name: myai-prometheus-ingress"));
+        assertTrue(policies.contains("port: 9090"));
+        assertTrue(taskJob.contains("app.kubernetes.io/component: task"));
+        assertFalse(policies.contains("ipBlock:\n            cidr: 0.0.0.0/0"));
+    }
+
+    @Test
     void containerImagesArePublishedOnlyAfterVerificationAndVulnerabilityScans() throws Exception {
         String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
 

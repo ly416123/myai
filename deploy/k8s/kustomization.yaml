@@ -6,3 +6,4 @@ resources:
   - base/prometheus-console.yaml
   - base/l5-postgres.yaml
   - base/postgres-backup-cronjob.yaml
+  - base/network-policies.yaml
