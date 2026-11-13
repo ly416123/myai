@@ -285,7 +285,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 null, null));
         run.setTaskPlan(plan);
         if (plan.route() == TaskPlan.Route.DELEGATE) {
-            plan.tasks().forEach(task -> run.addChildTask(ChildTaskRecord.pending(task)));
+            Map<String, String> traceContext = telemetry.captureCurrentTraceContext();
+            plan.tasks().forEach(task -> run.addChildTask(ChildTaskRecord.pending(task, traceContext)));
         }
         persist(run);
     }
@@ -460,7 +461,10 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                     run.addStep(step);
                     return step.stepId();
                 });
-        Observation workerObservation = telemetry.startStep(run, run.step(workerStepId), "collaborative");
+        Observation workerObservation;
+        try (var remoteParent = telemetry.restoreTraceContext(task.traceContext())) {
+            workerObservation = telemetry.startStep(run, run.step(workerStepId), "collaborative");
+        }
         ToolRegistry restricted = allTools.restrictedTo(worker.allowedTools());
         try (var workerScope = workerObservation.openScope();
              ToolExecutor executor = new ToolExecutor(restricted, config.toolTimeout())) {

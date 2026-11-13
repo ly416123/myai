@@ -26,6 +26,8 @@ import org.junit.jupiter.api.Test;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationHandler;
 import io.micrometer.observation.ObservationRegistry;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.context.Scope;
 
 import java.time.Duration;
 import java.util.List;
@@ -44,6 +46,44 @@ import static org.mockito.Mockito.spy;
 
 class CollaborativeWorkflowTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void persistsSupervisorTraceContextWithDurableChildTask() {
+        ToolRegistry tools = tools();
+        var telemetry = new AgentTelemetry(null, ObservationRegistry.create());
+        var tracer = SdkTracerProvider.builder().build().get("child-task-trace-test");
+        var parentSpan = tracer.spanBuilder("supervisor-root").startSpan();
+        var expectedContext = new AtomicReference<java.util.Map<String, String>>();
+        var completedRun = new AtomicReference<RunRecord>();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) {
+                return plan("""
+                        {"route":"DELEGATE","tasks":[
+                          {"taskId":"t-number","workerId":"numbers","description":"calculate 6 times 7",
+                           "dependencies":[],"deliverableIds":["number"]}],
+                          "deliverables":[{"deliverableId":"number","description":"calculation"}]}
+                        """);
+            }
+            if (messages.getFirst().content().equals("numbers prompt")) return new ModelResponse("42", List.of());
+            return new ModelResponse("done", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1));
+             Scope ignored = parentSpan.makeCurrent()) {
+            expectedContext.set(telemetry.captureCurrentTraceContext());
+            var workflow = new CollaborativeWorkflow(model, tools, workers(), store,
+                    new CollaborationConfig(5, 2, 10, 5, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)),
+                    JSON, telemetry);
+            RunRecord result = workflow.runTracked("trace context persistence");
+            completedRun.set(result);
+            assertEquals(RunStatus.SUCCEEDED, result.status());
+        } finally {
+            parentSpan.end();
+        }
+
+        ChildTaskRecord persistedTask = completedRun.get().childTasks().getFirst();
+        assertEquals(expectedContext.get(), persistedTask.traceContext());
+    }
 
     @Test
     void propagatesRunAndModelStepObservationsToCollaborativeModelClientThread() {

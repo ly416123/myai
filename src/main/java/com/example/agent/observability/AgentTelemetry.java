@@ -10,14 +10,23 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.propagation.TextMapGetter;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import com.example.agent.workflow.RunQueueSnapshot;
 
 /** Bounded-cardinality metrics and trace observations for Agent/Workflow execution. */
 public final class AgentTelemetry {
+    private static final TextMapGetter<Map<String, String>> TRACE_CONTEXT_GETTER = new TextMapGetter<>() {
+        @Override public Iterable<String> keys(Map<String, String> carrier) { return carrier.keySet(); }
+        @Override public String get(Map<String, String> carrier, String key) { return carrier.get(key); }
+    };
     private final MeterRegistry meters;
     private final ObservationRegistry observations;
     private final AtomicLong queueDepth = new AtomicLong();
@@ -49,6 +58,20 @@ public final class AgentTelemetry {
                 .lowCardinalityKeyValue("workflow", safeTag(workflow))
                 .highCardinalityKeyValue("run.id", run.runId())
                 .start();
+    }
+
+    /** Captures only W3C trace identity fields for durable child-task propagation; baggage is intentionally excluded. */
+    public Map<String, String> captureCurrentTraceContext() {
+        Map<String, String> carrier = new LinkedHashMap<>();
+        W3CTraceContextPropagator.getInstance().inject(Context.current(), carrier, Map::put);
+        return Map.copyOf(carrier);
+    }
+
+    /** Restores a persisted remote parent while the independently claimed child task is instrumented. */
+    public io.opentelemetry.context.Scope restoreTraceContext(Map<String, String> carrier) {
+        Context extracted = W3CTraceContextPropagator.getInstance().extract(Context.root(),
+                carrier == null ? Map.of() : carrier, TRACE_CONTEXT_GETTER);
+        return extracted.makeCurrent();
     }
 
     public Observation startStep(RunRecord run, RunStep step, String workflow) {

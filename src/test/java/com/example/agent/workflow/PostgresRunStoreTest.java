@@ -93,9 +93,12 @@ class PostgresRunStoreTest {
                 java.util.List.of(), java.util.List.of("result"));
         RunRecord parent = RunRecord.create(runId, "calculate", Duration.ofMinutes(2), RunType.COLLABORATIVE);
         parent.setTaskPlan(new TaskPlan(TaskPlan.Route.DELEGATE, java.util.List.of(planned), java.util.List.of()));
-        parent.addChildTask(ChildTaskRecord.pending(planned));
+        var traceContext = java.util.Map.of("traceparent",
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        parent.addChildTask(ChildTaskRecord.pending(planned, traceContext));
         parent.transitionTo(RunStatus.RUNNING, now, null);
         store.save(parent);
+        assertEquals(traceContext, store.find(runId).orElseThrow().childTasks().getFirst().traceContext());
         LeaseToken parentLease = store.claim(runId, "supervisor-audit", now, Duration.ofMinutes(1)).orElseThrow();
         TaskLeaseToken taskLease = store.claimChildTask(parentLease, planned.taskId(), "worker-audit", now,
                 Duration.ofSeconds(30)).orElseThrow();
