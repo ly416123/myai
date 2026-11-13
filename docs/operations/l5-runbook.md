@@ -6,9 +6,9 @@
 
 最近核对时间：2026-11-13。
 
-- 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL、监控和本地备份卷；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、kube-state-metrics 各 1 副本。kube-state-metrics v2.20.0 只读 `myai` namespace 的 CronJob 和 Job。
-- PostgreSQL 16 使用 5 GiB `local-path` PVC；备份 CronJob 每日上海时间 02:00 写入同节点 5 GiB PVC，配置保留 30 天。异地副本和 CA 签名私钥托管尚未建设。
+- 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。此前生成的归档 PVC 保留但不属于当前运行保障。
+- Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
+- PostgreSQL 16 使用 5 GiB `local-path` PVC。按项目决策，备份/恢复脚本、定时 CronJob 和归档监控已移除；此前归档 PVC 与数据保留但不挂载、不再更新或清理。当前数据库没有应用级备份与恢复保障。CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
 - L5 Prometheus 保留告警规则和本地状态，但没有 Alertmanager 或通知接收端。告警阈值是运维默认值，不是已批准的业务 SLO。
@@ -70,7 +70,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前 7 条规则覆盖 Collector/KSM 抓取目标不可用、备份成功指标缺失或时间超过 30 小时、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。备份成功指标缺失持续 5 分钟即告警；指标存在但时间戳陈旧时，超过 30 小时再持续 5 分钟告警。备份规则读取 `kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"}`；可在 Prometheus 控制台查询该指标确认最近一次成功时间。30 小时是运维默认阈值，需结合实际 CronJob 调度和业务恢复目标再审定。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 5 条规则覆盖 Collector 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
@@ -100,15 +100,13 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
 1. 检查 `myai-postgres-0` 事件、日志、PVC 状态及节点磁盘容量。
 2. 暂停新任务提交；不要删除 PVC、强删数据库 Pod 或手工修改 Run 表。
 3. 数据库恢复后确认 PostgreSQL Ready、Flyway/Worker 连接恢复，并观察租约接管。短暂数据库中断演练已有成功证据，但这不覆盖磁盘损坏或节点丢失。
-4. 如果怀疑数据损坏，先保留现场并核对最近成功备份及校验和；只有在恢复目标数据库明确且授权后才执行恢复。
+4. 如果怀疑数据损坏，先保留现场并停止进一步写入。当前没有受支持的 MyAI 数据库备份/恢复流程；此前归档 PVC 虽保留但未经当前恢复流程验证，不应当作可恢复承诺。
 
-### Collector、kube-state-metrics 或 Prometheus 不可用
+### Collector 或 Prometheus 不可用
 
 1. 检查对应 Pod、事件、日志与 Prometheus Targets API；Prometheus 是单副本，升级/重启期间本地查询可能短暂不可用。
-2. KSM 只需访问 `myai` namespace 的 CronJob/Job API。若 KSM 启动日志出现 Forbidden，检查 namespace Role/RoleBinding；若报连接超时，核对 L5 overlay 的 API `/32` NetworkPolicy 和 Service IP。不要扩大到 ClusterRole 或全网出站。
-3. 检查 `myai-kube-state-metrics` 抓取目标为 `up`，再核对 `kube_cronjob_status_last_successful_time` 是否包含备份 CronJob。目标恢复后，等待 Prometheus 下一次规则评估。
-4. 规则健康与告警状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，Pending/Firing 状态需要人工查看。
-5. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
+2. 规则健康与告警状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，Pending/Firing 状态需要人工查看。
+3. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
 
 ## 5. Worker 版本回滚
 
@@ -142,37 +140,7 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 
 确认 Worker 2/2 Ready、镜像与 overlay 一致，PostgreSQL/Collector/Prometheus/代理均 Ready，再允许提交新 Run。回滚应用版本不会撤销数据库迁移；若旧镜像不兼容当前 schema，必须停止回滚并走数据库恢复/向前修复评估。
 
-## 6. 备份检查与恢复边界
-
-检查最近备份 Job：
-
-```bash
-kubectl --context "$CTX" -n "$NS" get cronjob myai-postgres-backup -o json | jq -r '[
-  .spec.schedule,
-  .spec.timeZone,
-  (.spec.suspend | tostring),
-  (.status.lastScheduleTime // "-"),
-  (.status.lastSuccessfulTime // "-")
-] | @tsv'
-kubectl --context "$CTX" -n "$NS" get jobs \
-  -l app.kubernetes.io/component=backup -o json | jq -r '
-    .items[]
-    | select(any(.metadata.ownerReferences[]?;
-        .kind == "CronJob" and .name == "myai-postgres-backup"))
-    | [
-        .metadata.name,
-        .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"] // "-",
-        ((.status.succeeded // 0) | tostring),
-        ((.status.failed // 0) | tostring)
-      ] | @tsv'
-kubectl --context "$CTX" -n "$NS" logs job/<已完成的备份Job名>
-```
-
-正常 Job 应为 `Complete`，日志应显示加密归档生成及保留清理结果。自然调度验收还需确认 CronJob 为 `suspend=false`、计划保持 `0 2 * * *` / `Asia/Shanghai`，`lastScheduleTime` 对应预期日期的 02:00；Job 的 ownerReference 指向此 CronJob，注解 `batch.kubernetes.io/cronjob-scheduled-timestamp` 与该计划时刻一致，且 `lastSuccessfulTime` 已更新。仅看到手工创建的 Job 完成不能证明定时路径。备份脚本会在 `pg_dump` 前等待 PostgreSQL 可达，默认最多 60 秒；若 Job 失败，先看事件/日志和 PostgreSQL Service Endpoint/PVC 状态，确认是否为连接尚未就绪，再按已授权的运维流程处理。不要并行启动第二个手工备份 Job，也不要手工删除归档。2026-11-13 曾通过临时调度验证 CronJob 控制器路径，生成的 Job 完成且归档校验通过；CronJob 已恢复每日 02:00，仍需观察下一自然调度周期。CronJob 的 `Forbid` 不约束通过 `kubectl create job --from=cronjob/...` 手工创建的 Job。
-
-恢复脚本会清理目标数据库现有对象，并要求校验备份 SHA-256、提供 age 身份文件、显式确认数据库名和破坏性操作开关。优先恢复到**隔离的新数据库**，核验 schema 与业务数据后再决定是否切换。具体环境变量和命令见 [README 备份与恢复说明](../../README.md#postgresql-加密备份与恢复)。不要在没有事件授权、目标确认及有效恢复密钥的情况下对 L5 主库运行恢复脚本。备份密钥故障域/组织托管及异地备份目前按项目决策暂缓；同节点 PVC 不能恢复整台节点丢失后的数据。
-
-## 7. 验收与限制
+## 6. 验收与限制
 
 - Prometheus 规则自动回归：`bash ops/tests/prometheus-alerts-test.sh`。
 - Kubernetes 清单本地渲染：`kubectl kustomize deploy/overlays/l5`。
@@ -184,4 +152,4 @@ kubectl --context "$CTX" -n "$NS" logs job/<已完成的备份Job名>
   mvn --batch-mode --no-transfer-progress clean verify
   ```
 - 当前 L5 单节点和同节点 PVC 不提供节点故障恢复目标；RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
-- HTTP API/生产认证授权、异地备份、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。
+- 当前不提供 PostgreSQL 备份/恢复能力；原归档 PVC 保留但不纳入清单、不挂载且未经恢复演练。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。

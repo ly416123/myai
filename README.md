@@ -22,11 +22,11 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 ### l5 环境
 
-`l5` 指 `ly@192.168.122.55`。2026-11-13 复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致。轮换前恢复包保存在本机 age 加密备份中；SQLite 一致性快照完整，28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
+`l5` 指 `ly@192.168.122.55`。2026-11-13 复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致。轮换前控制面恢复包保存在本机 age 加密归档中；SQLite 一致性快照完整，28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
 
-MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector 与 Prometheus，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、kube-state-metrics、Collector、Prometheus 和 PostgreSQL 均 Ready。Prometheus 已抓取应用/Hikari 与 Kubernetes CronJob 指标。kube-state-metrics v2.20.0 按上游固定提交构建，只读取 `myai` namespace 中的 CronJob 和 Job；NetworkPolicy 仅允许它访问 K3s API、DNS 和 Prometheus 指标端口。L5 已加载 7 条 Prometheus 告警规则，包括 kube-state-metrics 不可用和备份成功指标缺失或超过 30 小时；成功指标缺失持续 5 分钟即告警，30 小时是当前运维默认值，不是业务 SLO。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。可通过 `kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-prometheus 9090:9090` 后访问 `http://localhost:9090/consoles/agent-overview.html`。PostgreSQL 和 Prometheus 使用各自 5Gi local-path PVC。L5 是单节点环境，这些卷不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 和备份任务通过 CA 与服务名校验连接。每日加密备份 CronJob 已启用 30 天清理；L5 手动备份与隔离恢复演练通过。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。旧 namespace 和 PVC 均未复用、删除。
+MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector 与 Prometheus，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus 和 PostgreSQL 均 Ready。Prometheus 抓取应用与 Hikari 指标。用户决定移除 MyAI PostgreSQL 备份功能后，L5 CronJob 已删除，kube-state-metrics 及其专用 RBAC、网络策略和镜像也已移除；Prometheus 保留 5 条应用运行告警规则。此前创建的 `myai-postgres-backups` 5Gi PVC 与其中归档数据保留，但已不在部署清单中且没有备份 Job 挂载它；未删除归档数据。MyAI 当前不提供自动或手动数据库备份/恢复功能，PostgreSQL 没有应用级备份保障。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。可通过 `kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-prometheus 9090:9090` 后访问 `http://localhost:9090/consoles/agent-overview.html`。PostgreSQL 和 Prometheus 使用各自 5Gi local-path PVC。L5 是单节点环境，这些卷不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。旧 namespace 和 PVC 均未复用、删除。
 
-L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和备份恢复边界见[运维手册](docs/operations/l5-runbook.md)。
+L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数据持久化限制见[运维手册](docs/operations/l5-runbook.md)。
 
 ## 环境与运行
 
@@ -54,7 +54,7 @@ L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和备
     mvn -DskipTests package
     docker build -t myai-agent:dev .
 
-短期 CLI 之外提供 `once` 单任务进程模式，供受控批任务调用；任务正文通过 `AGENT_TASK` 环境变量传入。API Key 由只读 Secret 卷挂载为文件，容器通过 `DEEPSEEK_KEY_FILE` 读取；Pod `fsGroup` 与 Secret 文件 `0440` 权限允许 UID 10001 的非 root 进程读取，不把 API Key 放入进程环境。示例 Job 位于 `deploy/k8s/base/agent-task-job.yaml`。GitHub Actions 默认分支验证成功后，会把应用、备份和模型出站代理镜像推送到 `ghcr.io/<owner>/myai-agent:<commit-sha>`、`ghcr.io/<owner>/myai-postgres-backup:<commit-sha>` 与 `ghcr.io/<owner>/myai-model-egress-proxy:<commit-sha>`，部署清单需替换成实际 GHCR 地址和不可变 commit SHA。通用模板引用 `myai-registry` 镜像拉取 Secret；L5 overlay 使用预导入镜像。需创建 `myai-runtime` ConfigMap、`myai-agent-task`、`myai-provider`、`myai-database` 和 `myai-postgres-tls` Secrets。数据库连接配置必须将 JDBC `sslmode=verify-full` 与 `sslrootcert` 路径指向只读 CA 文件。使用本仓库 PostgreSQL StatefulSet 时，TLS Secret 还需包含与 CA 对应的 `tls.crt`、`tls.key`；连接外部 PostgreSQL 时只向应用 Pod 提供受信任的 `ca.crt`，服务器证书私钥不得挂载到应用容器。Provider Secret 可由本地文件创建，例如 `kubectl create secret generic myai-provider --from-file=deepseek-api-key=deepseek.key`。然后用 `kubectl create -f deploy/k8s/base/agent-task-job.yaml` 创建单次任务。任务 Secret 应按任务单独创建并限制读取权限，完成后删除；不要把任务正文写进 Git 清单或镜像。K3s Secret 静态加密已在 L5 启用并完成轮换核验；MyAI 默认 ServiceAccount 无 Secret 读取权限。对既有 token-refresh RoleBinding 的核查确认：权限仅限 `agentteams-chatgpt-oauth-session` 这一命名 Secret 的 get/patch；对应 Helm CronJob 当前 suspended，且没有运行中的 Pod，因此保留其 Helm 管理资源，不与 MyAI 工作负载混用。
+短期 CLI 之外提供 `once` 单任务进程模式，供受控批任务调用；任务正文通过 `AGENT_TASK` 环境变量传入。API Key 由只读 Secret 卷挂载为文件，容器通过 `DEEPSEEK_KEY_FILE` 读取；Pod `fsGroup` 与 Secret 文件 `0440` 权限允许 UID 10001 的非 root 进程读取，不把 API Key 放入进程环境。示例 Job 位于 `deploy/k8s/base/agent-task-job.yaml`。GitHub Actions 默认分支验证成功后，会把应用和模型出站代理镜像推送到 `ghcr.io/<owner>/myai-agent:<commit-sha>` 与 `ghcr.io/<owner>/myai-model-egress-proxy:<commit-sha>`，部署清单需替换成实际 GHCR 地址和不可变 commit SHA。通用模板引用 `myai-registry` 镜像拉取 Secret；L5 overlay 使用预导入镜像。需创建 `myai-runtime` ConfigMap、`myai-agent-task`、`myai-provider`、`myai-database` 和 `myai-postgres-tls` Secrets。数据库连接配置必须将 JDBC `sslmode=verify-full` 与 `sslrootcert` 路径指向只读 CA 文件。使用本仓库 PostgreSQL StatefulSet 时，TLS Secret 还需包含与 CA 对应的 `tls.crt`、`tls.key`；连接外部 PostgreSQL 时只向应用 Pod 提供受信任的 `ca.crt`，服务器证书私钥不得挂载到应用容器。Provider Secret 可由本地文件创建，例如 `kubectl create secret generic myai-provider --from-file=deepseek-api-key=deepseek.key`。然后用 `kubectl create -f deploy/k8s/base/agent-task-job.yaml` 创建单次任务。任务 Secret 应按任务单独创建并限制读取权限，完成后删除；不要把任务正文写进 Git 清单或镜像。K3s Secret 静态加密已在 L5 启用并完成轮换核验；MyAI 默认 ServiceAccount 无 Secret 读取权限。对既有 token-refresh RoleBinding 的核查确认：权限仅限 `agentteams-chatgpt-oauth-session` 这一命名 Secret 的 get/patch；对应 Helm CronJob 当前 suspended，且没有运行中的 Pod，因此保留其 Helm 管理资源，不与 MyAI 工作负载混用。
 
 Job 假定 PostgreSQL 已由独立服务提供；L5 的 `myai` PostgreSQL 基础资源当前由 `deploy/k8s/base/l5-postgres.yaml` 管理。Job 和 Worker 都关闭 Kubernetes ServiceAccount Token 自动挂载，因为它们不调用 Kubernetes API；后续若增加 Kubernetes API 操作，应创建最小权限专用 ServiceAccount/RBAC 后再开放。L5 仍是单节点受控集成环境，不提供节点级高可用能力。
 
@@ -68,49 +68,9 @@ CLI 可使用 `/enqueue <任务>` 或 `/multi-enqueue <任务>` 将 Run 以 `CRE
 
 若明确要清理本地 PostgreSQL 开发数据，可使用 `docker compose down -v`；这会删除 Compose 命名卷中的全部本地 Run 数据。
 
-### PostgreSQL 加密备份与恢复
+### 数据备份范围
 
-`ops/postgres-backup.sh` 使用匹配 PostgreSQL 服务主版本的 `pg_dump`，通过独立 `age` 公钥加密流式备份，不在磁盘保留明文 dump；同时生成 SHA-256 校验文件。备份目标文件不会被覆盖。开始导出前会用 `pg_isready` 等待数据库可达，默认最多等待 60 秒、每 2 秒重试；可通过 `AGENT_DB_CONNECT_TIMEOUT_SECONDS`（1–600）和 `AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS`（1–60）调整。恢复脚本会先校验摘要，并要求显式授权和再次确认目标数据库名；它会清理目标库中的现有对象，因此优先恢复到新建的隔离数据库验证。
-
-先为备份建立独立密钥，私钥应放在与数据库和备份文件不同的受控位置：
-
-    mkdir -p "$HOME/.config/myai"
-    age-keygen -o "$HOME/.config/myai/backup-identity.txt"
-    chmod 600 "$HOME/.config/myai/backup-identity.txt"
-    age-keygen -y "$HOME/.config/myai/backup-identity.txt"
-
-最后一条命令输出的 `age1...` 公钥作为 `AGE_RECIPIENT`。备份和恢复连接使用标准 libpq 环境变量 `PGHOST`、`PGPORT`、`PGDATABASE`、`PGUSER`，数据库密码从 `AGENT_DB_PASSWORD` 读取并写入权限为 0600 的临时 `.pgpass` 文件；生产环境默认要求 `PGSSLMODE=verify-full`。本地 Compose 默认没有 TLS，需显式设置 `PGSSLMODE=disable`。
-
-本地备份示例（需安装 `age`、Python 3 和 PostgreSQL 客户端）：
-
-    set -a; source .env; set +a
-    export PGHOST=127.0.0.1 PGPORT="$AGENT_DB_PORT" PGDATABASE=myai PGUSER="$AGENT_DB_USERNAME"
-    export PGSSLMODE=disable AGE_RECIPIENT='age1...用上一步命令输出的公钥替换...'
-    ops/postgres-backup.sh "$HOME/secure-backups/myai-$(date +%Y%m%d-%H%M%S).dump.age"
-
-恢复前先建一个空的隔离数据库。下面的操作会清除该目标数据库中已有对象：
-
-    createdb myai_restore_check
-    export PGDATABASE=myai_restore_check
-    export AGE_IDENTITY_FILE="$HOME/.config/myai/backup-identity.txt"
-    export AGENT_RESTORE_CONFIRM_DATABASE=myai_restore_check AGENT_ALLOW_DESTRUCTIVE_RESTORE=YES
-    ops/postgres-restore.sh "$HOME/secure-backups/myai-备份时间.dump.age"
-
-备份镜像可通过 `AGENT_BACKUP_RETENTION_DAYS` 按数据库清理过期归档；未配置时只备份、不清理。清理仅删除超过配置天数、具备校验文件且没有活动锁目录的归档，并保留缺校验文件的归档供人工调查。保留天数应按组织的数据保留要求设置。运行 `bash ops/tests/postgres-backup-retention-test.sh` 验证清理规则，Docker smoke 也会创建并确认删除一个超期归档。异地复制、备份密钥轮换和定期恢复演练仍需接入组织密钥与存储系统，本仓库脚本不会替代这些运维策略。可用 Docker 与 `age` 的开发环境先构建备份镜像，再运行 `ops/tests/postgres-backup-restore-smoke.sh`。Smoke 使用实际备份镜像以非 root 用户、只读根文件系统连接临时 PostgreSQL 16 容器，创建加密归档，再通过隔离数据库恢复并回验数据；无需本机安装 libpq。构建默认使用官方 Alpine 仓库；本地网络无法访问时可用 `--build-arg ALPINE_MIRROR=mirrors.aliyun.com/alpine` 覆盖仓库镜像，CI 仍使用默认官方仓库。不要把私钥、明文数据库密码或备份文件提交到 Git。
-
-#### Kubernetes 定时备份模板
-
-`deploy/k8s/base/postgres-backup-cronjob.yaml` 每天上海时间 02:00 运行加密备份，禁止并发，并限制启动延迟、单次运行时长和重试次数。先按实际 PostgreSQL 主版本构建对应客户端镜像（当前模板为 PostgreSQL 16）：
-
-    bash ops/fetch-age.sh
-    docker build -f ops/backup.Dockerfile -t myai-postgres-backup:dev .
-    MYAI_BACKUP_IMAGE=myai-postgres-backup:dev ops/tests/postgres-backup-restore-smoke.sh
-
-L5 overlay 描述每日备份配置；集群 CronJob 已启用，`myai-backup-config` ConfigMap 和 5Gi `myai-postgres-backups` PVC 已创建并 Bound。CronJob 引用既有 `myai-database` 密码 Secret，以 age 公钥加密归档，并按 30 天策略清理。PostgreSQL 已启用 TLS；Worker 与备份客户端均使用 CA 和服务 DNS 名执行 `verify-full` 校验。TLS 配置在 L5 通过 PostgreSQL 客户端握手和实际备份 Job 验证。归档 PVC 与数据库 PVC 位于同一 L5 节点，不能替代异地备份或节点故障恢复副本；用户已决定短期不建设异地备份、CA 签名密钥故障/托管方案及告警通知投递；Prometheus 规则和本地告警状态保留。CronJob 使用预导入并扫描的 linux/amd64 备份镜像。保留清理只删除指定数据库、超过保留期、具备校验文件且无活动锁的归档。镜像使用 PostgreSQL 16 Alpine，并在构建前运行 `ops/fetch-age.sh`，从固定版本工具链构建 age CLI，工具链归档按固定 SHA-256 校验。
-
-#### Kubernetes 状态指标镜像
-
-L5 暂时不能从 `registry.k8s.io` 拉取镜像，因此仓库提供 `ops/build-kube-state-metrics-image.sh`：使用 Go 1.26.10，从 [kube-state-metrics v2.20.0 上游发布](https://github.com/kubernetes/kube-state-metrics/releases/tag/v2.20.0) 固定提交 `4ffeda2ef866b0fef372849825a803296483b336` 构建 linux/amd64 镜像，并应用 `ops/kube-state-metrics-go-overrides.txt` 中已修复 HIGH 漏洞的依赖版本。CI 已配置为使用 Go 1.26.10 构建、扫描 HIGH/CRITICAL 漏洞，并在默认分支发布到 GHCR；本次没有推送远程，也未触发远端 CI。L5 当前使用容器镜像 `docker.io/library/myai-kube-state-metrics:v2.20.0-my.2`，由受控构建后导入节点 containerd；不要为了拉取镜像而放宽 KSM 的 API 出站策略。
+按项目决策，MyAI 的 PostgreSQL 自动备份、手动备份/恢复脚本、备份镜像、定时 Job 和相关监控均已移除。L5 曾生成的归档 PVC 仍保留，未删除其中数据；该 PVC 已从部署清单移出，也不会继续写入或自动清理。当前数据库没有应用级备份或恢复流程，因此 PostgreSQL PVC/节点损坏可能导致 Run 与检查点不可恢复。请勿将保留归档 PVC 视为可用的灾备方案；如需重新建立备份策略，应另行明确存储故障域、密钥托管、保留期限和恢复目标。
 
 CLI 命令：
 
@@ -133,7 +93,7 @@ CLI 命令：
 
     mvn clean test
 
-Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus 和受限范围的 kube-state-metrics，7 条告警规则均已加载；按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；Trivy HIGH CVE-2026-78661 仍为已知未修复风险。
+Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus，5 条应用告警规则均已加载；备份专用的 kube-state-metrics 与规则已移除。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；Trivy HIGH CVE-2026-78661 仍为已知未修复风险。
 
 ## Workflow 状态与恢复语义
 
@@ -157,7 +117,7 @@ PostgreSQL claim 使用数据库条件更新，租约到期后新 owner 获得�
 
 恢复时只执行 PENDING 工具。发现旧进程留下的 IN_PROGRESS 工具步骤时，系统将其视为结果未知，记录 INDETERMINATE，把“未自动重放”的错误结果交回模型，绝不默默重放。工具收到中断不等于外部副作用已经撤销；没有工具端幂等键或事务协议时，本项目不保证 exactly-once。模型请求没有工具副作用，若进程在请求中退出，恢复可能重发该请求并产生重复模型费用。
 
-检查点需要保存消息历史和待执行工具请求，所以 PostgreSQL 检查点可能包含用户输入、模型文本、工具参数和工具结果。运行步骤/日志不会记录完整工具参数或原始异常内容；API Key 不属于 RunRecord。L5 已为 PostgreSQL、应用 Worker 和备份客户端启用证书校验 TLS；仍需落实组织级 CA 私钥托管/轮换、数据库访问控制、实际 Run 保留周期、用户删除请求处理及备份到期数据清除策略。
+检查点需要保存消息历史和待执行工具请求，所以 PostgreSQL 检查点可能包含用户输入、模型文本、工具参数和工具结果。运行步骤/日志不会记录完整工具参数或原始异常内容；API Key 不属于 RunRecord。L5 已为 PostgreSQL 与应用 Worker 启用证书校验 TLS；仍需落实组织级 CA 私钥托管/轮换、数据库访问控制、实际 Run 保留周期和用户删除请求处理。此前的 PostgreSQL 备份功能已按项目决策移除，旧归档 PVC 保留但不属于当前运行保障。
 
 ## 预算、重试与错误
 
@@ -190,9 +150,9 @@ Worker 轮询时刷新四个 PostgreSQL 聚合 Gauge：`agent.worker.queue.depth
 
 Run 执行期间会保持 `agent.run` Observation scope；模型调用在线程间显式恢复对应的步骤 Observation。CollaborativeWorkflow 的本地并行 Worker 使用 `agent.step` 作为 Worker span，模型与工具步骤嵌套其下。回归测试验证 `Run → Worker → Model` 父子层级。独立 `separateTaskWorkers` 通过数据库领取任务时，Worker 在另一个进程启动独立 trace root，并携带 run/task/worker 关联字段；当前尚未持久化 W3C trace context，因此跨进程 trace 不会接成同一条 trace。JDBC 操作目前有连接池指标，但没有单独的数据库调用 span。模型提示词、响应及工具参数不作为 span 属性。
 
-Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 告警规则统一位于 `deploy/k8s/base/agent-alerts.yaml`，覆盖 Collector/KSM target、备份成功时间、队列等待、过期租约、近 5 分钟失败 Run 和 Hikari 连接池；阈值是运维起点，不是业务 SLO。Kustomize 从该文件生成 Prometheus ConfigMap，`promtool` 测试也读取同一文件。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称映射；L5 已部署单副本 Collector、Prometheus、kube-state-metrics 和双副本 Worker，7 条 Prometheus 告警规则已加载，包含近期失败 Run 与备份时效告警。仍需设置环境标签并确认多副本队列 Gauge 聚合口径；通知投递按用户决定短期暂缓。当前没有 Grafana、Alertmanager/告警接收端或外部集中监控后端。
+Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 告警规则统一位于 `deploy/k8s/base/agent-alerts.yaml`，覆盖 Collector target、队列等待、过期租约、近 5 分钟失败 Run 和 Hikari 连接池；阈值是运维起点，不是业务 SLO。Kustomize 从该文件生成 Prometheus ConfigMap，`promtool` 测试也读取同一文件。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称映射；L5 已部署单副本 Collector、Prometheus 和双副本 Worker，5 条 Prometheus 告警规则已加载，包含近期失败 Run 告警。仍需设置环境标签并确认多副本队列 Gauge 聚合口径；通知投递按用户决定短期暂缓。当前没有 Grafana、Alertmanager/告警接收端或外部集中监控后端。
 
-Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖 7 条规则的 `for` 延迟、触发注释和阈值边界，也覆盖成功指标缺失与陈旧时间戳。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
+Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖当前 5 条规则的 `for` 延迟、触发注释和阈值边界。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
 
 ## 工具与分层
 
@@ -237,6 +197,6 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 ## CI 安全扫描
 
-GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用、PostgreSQL 备份和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
+GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
 
-截至 2026-11-13，最新完整 Maven `clean verify` 为 157 项通过、0 失败、0 错误、0 跳过，包含 PostgreSQL RunStore、Spring 应用上下文和 OTLP Collector Testcontainers 集成测试，以及父 Run 租约心跳回归、存储瞬时故障分类和 Run/Worker/Model Observation 上下文传播测试。测试 PostgreSQL 将数据目录放入有界 tmpfs，避免向 Docker writable layer 写入临时数据库。L5 overlay 的 Kustomize 渲染与 kubectl server-side dry-run 通过；Trivy 对 Kubernetes base 清单的 HIGH/CRITICAL 配置扫描为 0 项。代理和 Worker 镜像 HIGH/CRITICAL 漏洞扫描均为 0。备份配置已部署：CronJob 每日上海时间 02:00 调度，30 天保留；PVC 已 Bound。L5 手动加密备份与隔离 PostgreSQL 恢复演练通过。2026-11-13 临时调整调度触发的 CronJob Job 完成，归档 SHA-256 校验通过；备份脚本现会在 `pg_dump` 前最多等待数据库连接 60 秒。CronJob 已恢复每日 02:00，更新镜像后的下一自然周期仍待观察。新增评测 Runner 的 Fake 测试覆盖调用预算停止、工具结果和 Token 汇总、单价估值、禁用保护、版本化场景载入及协作计划摘要；调度线程生命周期测试验证定时任务线程为 daemon，且在调度上下文保持打开时 JVM 可退出；默认评测报告目录与 Maven clean 输出目录隔离；Spring 配置测试验证 Provider Secret 文件路径可由环境变量指定；Job/Worker 清单契约验证只读 Secret 文件挂载、非 root `fsGroup`、`0440` 文件权限、关闭 ServiceAccount Token 自动挂载和 GHCR 私有镜像拉取 Secret。发布工作流契约测试覆盖默认分支门禁、扫描后推送及最小包写权限。DeepSeek Flash 两次真实评测均为 5/5 样例通过、每次 9 次模型调用和 3 次工具调用；Token 分别为 4329/451 与 4329/426，未设置价格，费用估值未知。其余样例覆盖 PostgreSQL 可恢复批次查询、独立 RunStore 实例接管超时父/子租约、全量与限量 Run 列表、队列快照与过期租约统计、Hikari 连接池指标绑定、Worker 并发与类型分派及健康探针、父 Run fencing 后子任务立即安全重领、共享预算并发限额/幂等/fencing、子任务跨进程领取和续租、任务消息/步骤检查点隔离、依赖顺序、Supervisor 等待任务完成、持久取消与模型请求中断及父 Run 终态后的子任务租约收敛、子任务 Worker 亚毫秒轮询配置拒绝、JSON Schema 嵌套/组合/本地引用约束和远程引用拒绝、Provider 401/408/429/503 与请求超时分类、备份 CronJob 与监控配置部署契约、队列等待指标、任务提交、工具状态审计（含父/子任务路径及保留级联清理）、终态 Run 保留清理、数据库回滚和关闭取消。Run Store 应用镜像已在本地构建，Trivy 对当前镜像的 Ubuntu 系统包及 Java 依赖扫描均为 0 个 HIGH/CRITICAL 漏洞。最终备份镜像也通过 Trivy 漏洞扫描；实际镜像入口的非 root/只读文件系统加密备份及隔离库恢复 smoke 通过。Trivy 配置扫描覆盖 Kubernetes base 与 `ops`，无 HIGH/CRITICAL 配置项；Prometheus 镜像另有一项可修复 HIGH 漏洞。L5 Worker、PostgreSQL、Collector 和 Prometheus 已实际部署，Kustomize overlay 客户端 dry-run 通过；L5 加密备份 CronJob 已启用，PVC 已 Bound；手动加密备份和 age 解密至隔离 PostgreSQL 的恢复验证均成功。GitHub Actions 远端流水线尚未运行，不能据此确认 CI 门禁；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 镜像有一项未修复 HIGH（CVE-2026-78661），按用户决定继续保留该版本。企业升级的已完成/待办边界见[路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。
+备份功能移除后的验收结果：`mvn --batch-mode --no-transfer-progress -Dtest=ContainerDeploymentContractTest test` 11/11 通过；`DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock TESTCONTAINERS_RYUK_DISABLED=true mvn --batch-mode --no-transfer-progress clean verify` BUILD SUCCESS，157 项通过、0 失败/错误/跳过，含 PostgreSQL 与 OTLP Collector Testcontainers。`bash ops/tests/prometheus-alerts-test.sh` 使用 L5 同版 Prometheus 的 `promtool` 返回 SUCCESS；`kubectl apply --dry-run=server -k deploy/overlays/l5` 成功。L5 CronJob、备份配置及 kube-state-metrics 已删除，Prometheus 保留 5 条应用告警；`myai-postgres-backups` PVC 保留，不在清单中且不再挂载。此前的备份与隔离恢复结果属于历史验证，不代表当前存在备份/恢复能力。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 镜像有一项未修复 HIGH（CVE-2026-78661），按用户决定继续保留该版本。企业升级的已完成/待办边界见[路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。

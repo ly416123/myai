@@ -38,9 +38,8 @@ class ContainerDeploymentContractTest {
         String overlay = Files.readString(Path.of("deploy/overlays/l5/kustomization.yaml"));
         assertTrue(overlay.contains("count: 2"));
         assertTrue(overlay.contains("newTag: l5-20261113"));
-        assertTrue(overlay.contains("newName: docker.io/library/myai-postgres-backup"));
-        assertTrue(Files.readString(Path.of("deploy/k8s/base/postgres-backup-cronjob.yaml"))
-                .contains("image: docker.io/library/myai-postgres-backup:l5-20261113-db-ready"));
+        assertFalse(overlay.contains("myai-postgres-backup"));
+        assertFalse(Files.exists(Path.of("deploy/k8s/base/postgres-backup-cronjob.yaml")));
         assertTrue(manifest.contains("backoffLimit: 0"));
         assertFalse(manifest.contains("kind: Deployment"));
         assertProviderCredentialIsMountedAsReadOnlyFile(manifest);
@@ -95,43 +94,24 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
-    void backupStatusExporterHasNamespaceScopedAccessAndRestrictedNetworkPath() throws Exception {
-        String exporter = Files.readString(Path.of("deploy/overlays/l5/kube-state-metrics.yaml"));
-        String overlay = Files.readString(Path.of("deploy/overlays/l5/kube-state-metrics-egress.yaml"));
+    void backupJobsAndTheirStatusExporterAreAbsentFromDeployment() throws Exception {
         String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
         String rules = Files.readString(Path.of("deploy/k8s/base/agent-alerts.yaml"));
         String kustomization = Files.readString(Path.of("deploy/overlays/l5/kustomization.yaml"));
         String networkPolicies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
 
-        assertTrue(exporter.contains("registry.example.invalid/kube-state-metrics:v2.20.0"));
-        String imageBuild = Files.readString(Path.of("ops/build-kube-state-metrics-image.sh"));
-        String imageDockerfile = Files.readString(Path.of("ops/kube-state-metrics.Dockerfile"));
-        String goOverrides = Files.readString(Path.of("ops/kube-state-metrics-go-overrides.txt"));
-        assertTrue(imageBuild.contains("4ffeda2ef866b0fef372849825a803296483b336"));
-        assertTrue(imageBuild.contains("v2.20.0"));
-        assertTrue(imageBuild.contains("go1.26.10"));
-        assertTrue(goOverrides.contains("golang.org/x/net v0.62.0"));
-        assertTrue(goOverrides.contains("google.golang.org/grpc v1.83.2"));
-        assertTrue(imageDockerfile.contains("FROM scratch"));
-        assertTrue(exporter.contains("--resources=cronjobs,jobs"));
-        assertTrue(exporter.contains("--namespaces=myai"));
-        assertTrue(exporter.contains("resources: [cronjobs, jobs]"));
-        assertTrue(exporter.contains("verbs: [list, watch]"));
-        assertFalse(exporter.contains("kind: ClusterRole"));
-        assertTrue(exporter.contains("automountServiceAccountToken: true"));
-        assertTrue(exporter.contains("readOnlyRootFilesystem: true"));
-        assertTrue(exporter.contains("httpGet: {path: /livez, port: metrics}"));
-        assertTrue(exporter.contains("httpGet: {path: /readyz, port: telemetry}"));
-        assertTrue(kustomization.contains("kube-state-metrics-egress.yaml"));
-        assertTrue(kustomization.contains("newTag: v2.20.0-my.2"));
-        assertTrue(overlay.contains("192.168.122.55/32"));
-        assertTrue(overlay.contains("10.43.0.1/32"));
-        assertTrue(networkPolicies.contains("myai-kube-state-metrics-ingress"));
-        assertTrue(networkPolicies.contains("app.kubernetes.io/name: myai-kube-state-metrics"));
-        assertTrue(foundation.contains("job_name: myai-kube-state-metrics"));
-        assertTrue(foundation.contains("myai-kube-state-metrics:8080"));
-        assertTrue(rules.contains("AgentBackupStale"));
-        assertTrue(rules.contains("AgentKubeStateMetricsDown"));
+        assertFalse(Files.exists(Path.of("deploy/overlays/l5/kube-state-metrics.yaml")));
+        assertFalse(Files.exists(Path.of("deploy/overlays/l5/kube-state-metrics-egress.yaml")));
+        assertFalse(kustomization.contains("kube-state-metrics"));
+        assertFalse(kustomization.contains("myai-postgres-backup"));
+        assertFalse(foundation.contains("kube-state-metrics"));
+        assertFalse(foundation.contains("myai-backup-config"));
+        assertFalse(foundation.contains("myai-postgres-backups"));
+        assertFalse(networkPolicies.contains("component: backup"));
+        assertFalse(networkPolicies.contains("myai-backup-egress"));
+        assertFalse(networkPolicies.contains("kube-state-metrics"));
+        assertFalse(rules.contains("AgentBackupStale"));
+        assertFalse(rules.contains("AgentKubeStateMetricsDown"));
     }
 
     @Test
@@ -153,8 +133,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentExpiredRunLeases"));
         assertTrue(rules.contains("AgentRecentRunFailures"));
         assertTrue(rules.contains("AgentDatabasePoolNearCapacity"));
-        assertTrue(rules.contains("AgentBackupStale"));
-        assertTrue(rules.contains("AgentKubeStateMetricsDown"));
+        assertFalse(rules.contains("AgentBackupStale"));
+        assertFalse(rules.contains("AgentKubeStateMetricsDown"));
     }
 
     @Test
@@ -187,7 +167,7 @@ class ContainerDeploymentContractTest {
         assertTrue(policies.contains("port: 5432"));
         assertTrue(policies.contains("component: worker"));
         assertTrue(policies.contains("component: task"));
-        assertTrue(policies.contains("component: backup"));
+        assertFalse(policies.contains("component: backup"));
         assertTrue(policies.contains("name: myai-collector-ingress"));
         assertTrue(policies.contains("port: 4317"));
         assertTrue(policies.contains("port: 4318"));
@@ -255,52 +235,21 @@ class ContainerDeploymentContractTest {
         assertFalse(workflow.contains(":latest"));
         String publishJob = workflow.substring(workflow.indexOf("publish-images:"));
         assertTrue(publishJob.indexOf("Scan runtime image") < publishJob.lastIndexOf("docker push"));
-        assertTrue(publishJob.indexOf("Scan backup image") < publishJob.lastIndexOf("docker push"));
+        assertTrue(publishJob.indexOf("Scan model egress proxy image") < publishJob.lastIndexOf("docker push"));
+        assertFalse(workflow.contains("backup"));
+        assertFalse(workflow.contains("kube-state-metrics"));
     }
 
     @Test
-    void scheduledBackupIsEncryptedBoundedAndUsesClusterSecretsAndStorage() throws Exception {
-        String manifest = Files.readString(Path.of("deploy/k8s/base/postgres-backup-cronjob.yaml"));
-        String image = Files.readString(Path.of("ops/backup.Dockerfile"));
-        String smoke = Files.readString(Path.of("ops/tests/postgres-backup-restore-smoke.sh"));
-        String retention = Files.readString(Path.of("ops/prune-postgres-backups.sh"));
-        String scheduled = Files.readString(Path.of("ops/run-scheduled-backup.sh"));
-
-        assertTrue(manifest.contains("kind: CronJob"));
-        assertTrue(manifest.contains("schedule: \"0 2 * * *\""));
-        assertTrue(manifest.contains("timeZone: Asia/Shanghai"));
-        assertTrue(manifest.contains("concurrencyPolicy: Forbid"));
-        assertTrue(manifest.contains("activeDeadlineSeconds: 600"));
-        assertTrue(manifest.contains("name: myai-database"));
-        assertTrue(manifest.contains("key: database-password"));
-        assertTrue(manifest.contains("myai-backup-config"));
-        assertTrue(manifest.contains("key: age-recipient"));
-        assertTrue(manifest.contains("value: verify-full"));
-        assertTrue(manifest.contains("PGSSLROOTCERT"));
-        assertTrue(manifest.contains("AGENT_BACKUP_RETENTION_DAYS"));
-        assertTrue(manifest.contains("persistentVolumeClaim:"));
-        assertTrue(manifest.contains("claimName: myai-postgres-backups"));
-        assertFalse(manifest.contains("myai-backup-database"));
-        assertTrue(manifest.contains("database-ca"));
-        assertFalse(manifest.contains("name: myai-registry"));
-        assertFalse(manifest.contains("hostPath:"));
-        assertTrue(manifest.contains("runAsNonRoot: true"));
-        assertTrue(manifest.contains("readOnlyRootFilesystem: true"));
-        assertTrue(image.contains("postgres:16-alpine"));
-        assertTrue(image.contains("COPY ops/.build/age /usr/local/bin/age"));
-        assertTrue(image.contains("COPY ops/prune-postgres-backups.sh /opt/myai/prune-postgres-backups.sh"));
-        assertTrue(scheduled.indexOf("/opt/myai/postgres-backup.sh") < scheduled.indexOf("/opt/myai/prune-postgres-backups.sh"));
-        assertTrue(image.contains("apk upgrade --no-cache"));
-        assertTrue(image.contains("rm -f /usr/local/bin/gosu"));
-        assertTrue(image.contains("age"));
-        assertFalse(image.contains("apk add"));
-        assertTrue(image.contains("USER 10001:10001"));
-        assertTrue(smoke.contains("docker exec --interactive"));
-        assertFalse(smoke.contains("for tool in docker pg_dump"));
-        assertTrue(Files.readString(Path.of("ops/fetch-age.sh")).contains("go_version=\"1.26.11\""));
-        assertTrue(Files.readString(Path.of("ops/fetch-age.sh")).contains("6c2f29b458b5add0835f18b776f69c8881a6d88428f1484a6da55755e620757e"));
-        assertTrue(retention.contains("myai-${PGDATABASE}-*.dump.age"));
-        assertTrue(retention.contains("! -e \"$archive.lock\""));
+    void backupAndRestoreAutomationAreAbsentFromSourceAndCi() throws Exception {
+        String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
+        assertFalse(Files.exists(Path.of("ops/postgres-backup.sh")));
+        assertFalse(Files.exists(Path.of("ops/postgres-restore.sh")));
+        assertFalse(Files.exists(Path.of("ops/backup.Dockerfile")));
+        assertFalse(Files.exists(Path.of("deploy/k8s/base/postgres-backup-cronjob.yaml")));
+        assertFalse(workflow.contains("myai-postgres-backup"));
+        assertFalse(workflow.contains("postgres-backup"));
+        assertFalse(workflow.contains("fetch-age.sh"));
     }
 
     private static void assertProviderCredentialIsMountedAsReadOnlyFile(String manifest) {

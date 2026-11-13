@@ -25,10 +25,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: myai-agent
               app.kubernetes.io/component: task
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: myai-agent
-              app.kubernetes.io/component: backup
       ports:
         - protocol: TCP
           port: 5432
@@ -75,30 +71,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: myai-otel-collector
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: myai-kube-state-metrics
       ports:
         - protocol: TCP
           port: 9090
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: myai-kube-state-metrics-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: myai-kube-state-metrics
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: myai-prometheus
-      ports:
-        - protocol: TCP
-          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -185,37 +160,6 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: myai-backup-egress
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: myai-agent
-      app.kubernetes.io/component: backup
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: myai-postgres
-      ports:
-        - protocol: TCP
-          port: 5432
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
   name: myai-prometheus-egress
 spec:
   podSelector:
@@ -230,13 +174,6 @@ spec:
       ports:
         - protocol: TCP
           port: 9464
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: myai-kube-state-metrics
-      ports:
-        - protocol: TCP
-          port: 8080
     - to:
         - namespaceSelector:
             matchLabels:

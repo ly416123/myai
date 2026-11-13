@@ -10,23 +10,6 @@ groups:
         annotations:
           summary: MyAI telemetry collector metrics endpoint is unavailable
 
-      - alert: AgentKubeStateMetricsDown
-        expr: up{job="myai-kube-state-metrics"} == 0
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: Kubernetes backup status metrics endpoint is unavailable
-
-      - alert: AgentBackupStale
-        expr: absent(kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"}) or (time() - kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"} > 30 * 60 * 60)
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: No successful PostgreSQL backup is visible within the freshness window
-          description: Check the CronJob, backup Job status, local backup PVC, and kube-state-metrics availability.
-
       - alert: AgentWorkerQueueStalled
         expr: max(myai_agent_worker_queue_oldest_seconds) > 300
         for: 5m

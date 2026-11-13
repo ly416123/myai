@@ -128,9 +128,6 @@ data:
       - job_name: myai-otel-collector
         static_configs:
           - targets: [myai-otel-collector:9464]
-      - job_name: myai-kube-state-metrics
-        static_configs:
-          - targets: [myai-kube-state-metrics:8080]
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -228,25 +225,3 @@ spec:
     app.kubernetes.io/name: myai-prometheus
   ports:
     - {name: web, port: 9090, targetPort: web}
-
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: myai-backup-config
-  namespace: myai
-data:
-  age-recipient: age1x4wagd3efyku38sg2wz978khva829wnajqsxmxdmrn4xqm6gs5us9q3fkj
-  retention-days: "30"
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: myai-postgres-backups
-  namespace: myai
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 5Gi
