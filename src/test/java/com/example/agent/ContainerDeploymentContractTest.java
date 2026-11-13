@@ -95,6 +95,46 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
+    void backupStatusExporterHasNamespaceScopedAccessAndRestrictedNetworkPath() throws Exception {
+        String exporter = Files.readString(Path.of("deploy/overlays/l5/kube-state-metrics.yaml"));
+        String overlay = Files.readString(Path.of("deploy/overlays/l5/kube-state-metrics-egress.yaml"));
+        String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
+        String rules = Files.readString(Path.of("deploy/k8s/base/agent-alerts.yaml"));
+        String kustomization = Files.readString(Path.of("deploy/overlays/l5/kustomization.yaml"));
+        String networkPolicies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
+
+        assertTrue(exporter.contains("registry.example.invalid/kube-state-metrics:v2.20.0"));
+        String imageBuild = Files.readString(Path.of("ops/build-kube-state-metrics-image.sh"));
+        String imageDockerfile = Files.readString(Path.of("ops/kube-state-metrics.Dockerfile"));
+        String goOverrides = Files.readString(Path.of("ops/kube-state-metrics-go-overrides.txt"));
+        assertTrue(imageBuild.contains("4ffeda2ef866b0fef372849825a803296483b336"));
+        assertTrue(imageBuild.contains("v2.20.0"));
+        assertTrue(imageBuild.contains("go1.26.10"));
+        assertTrue(goOverrides.contains("golang.org/x/net v0.62.0"));
+        assertTrue(goOverrides.contains("google.golang.org/grpc v1.83.2"));
+        assertTrue(imageDockerfile.contains("FROM scratch"));
+        assertTrue(exporter.contains("--resources=cronjobs,jobs"));
+        assertTrue(exporter.contains("--namespaces=myai"));
+        assertTrue(exporter.contains("resources: [cronjobs, jobs]"));
+        assertTrue(exporter.contains("verbs: [list, watch]"));
+        assertFalse(exporter.contains("kind: ClusterRole"));
+        assertTrue(exporter.contains("automountServiceAccountToken: true"));
+        assertTrue(exporter.contains("readOnlyRootFilesystem: true"));
+        assertTrue(exporter.contains("httpGet: {path: /livez, port: metrics}"));
+        assertTrue(exporter.contains("httpGet: {path: /readyz, port: telemetry}"));
+        assertTrue(kustomization.contains("kube-state-metrics-egress.yaml"));
+        assertTrue(kustomization.contains("newTag: v2.20.0-my.2"));
+        assertTrue(overlay.contains("192.168.122.55/32"));
+        assertTrue(overlay.contains("10.43.0.1/32"));
+        assertTrue(networkPolicies.contains("myai-kube-state-metrics-ingress"));
+        assertTrue(networkPolicies.contains("app.kubernetes.io/name: myai-kube-state-metrics"));
+        assertTrue(foundation.contains("job_name: myai-kube-state-metrics"));
+        assertTrue(foundation.contains("myai-kube-state-metrics:8080"));
+        assertTrue(rules.contains("AgentBackupStale"));
+        assertTrue(rules.contains("AgentKubeStateMetricsDown"));
+    }
+
+    @Test
     void prometheusDeploymentAndRuleTestsShareTheSameCompleteAlertFile() throws Exception {
         String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
         String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
@@ -113,6 +153,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentExpiredRunLeases"));
         assertTrue(rules.contains("AgentRecentRunFailures"));
         assertTrue(rules.contains("AgentDatabasePoolNearCapacity"));
+        assertTrue(rules.contains("AgentBackupStale"));
+        assertTrue(rules.contains("AgentKubeStateMetricsDown"));
     }
 
     @Test

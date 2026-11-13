@@ -20,6 +20,9 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: '1.26.10'
       - name: Run unit and PostgreSQL integration tests
         run: mvn --batch-mode --no-transfer-progress clean verify
       - name: Scan Git history for leaked credentials
@@ -29,7 +32,7 @@ jobs:
           git --redact --no-banner /repo
       - name: Check database backup and restore safeguards
         run: |
-          bash -n ops/run-scheduled-backup.sh ops/postgres-backup.sh ops/postgres-restore.sh ops/prune-postgres-backups.sh ops/tests/postgres-backup-retention-test.sh ops/tests/postgres-backup-restore-test.sh ops/tests/postgres-backup-restore-smoke.sh
+          bash -n ops/run-scheduled-backup.sh ops/postgres-backup.sh ops/postgres-restore.sh ops/prune-postgres-backups.sh ops/build-kube-state-metrics-image.sh ops/tests/postgres-backup-retention-test.sh ops/tests/postgres-backup-restore-test.sh ops/tests/postgres-backup-restore-smoke.sh
           bash ops/tests/postgres-backup-retention-test.sh
           bash ops/tests/postgres-backup-restore-test.sh
       - name: Test Prometheus alert firing and threshold behavior
@@ -46,6 +49,10 @@ jobs:
         run: docker build --tag myai-agent:${{ github.sha }} .
       - name: Build model egress proxy image
         run: docker build --file ops/egress-proxy.Dockerfile --tag myai-model-egress-proxy:${{ github.sha }} .
+      - name: Build upstream kube-state-metrics image
+        env:
+          KSM_IMAGE: myai-kube-state-metrics:v2.20.0-my.2
+        run: bash ops/build-kube-state-metrics-image.sh
       - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -69,6 +76,15 @@ jobs:
         with:
           scan-type: image
           image-ref: myai-model-egress-proxy:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan kube-state-metrics image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: myai-kube-state-metrics:v2.20.0-my.2
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -98,6 +114,9 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: '1.26.10'
       - name: Package runtime
         run: mvn --batch-mode --no-transfer-progress -DskipTests package
       - name: Build checksum-pinned age tools
@@ -110,6 +129,7 @@ jobs:
           echo "runtime=ghcr.io/${owner}/myai-agent" >> "$GITHUB_OUTPUT"
           echo "backup=ghcr.io/${owner}/myai-postgres-backup" >> "$GITHUB_OUTPUT"
           echo "proxy=ghcr.io/${owner}/myai-model-egress-proxy" >> "$GITHUB_OUTPUT"
+          echo "ksm=ghcr.io/${owner}/myai-kube-state-metrics" >> "$GITHUB_OUTPUT"
       - name: Build runtime image
         run: >-
           docker build
@@ -128,6 +148,10 @@ jobs:
           --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
           --label "org.opencontainers.image.revision=${GITHUB_SHA}"
           --tag "${{ steps.images.outputs.proxy }}:${GITHUB_SHA}" .
+      - name: Build upstream kube-state-metrics image
+        env:
+          KSM_IMAGE: ${{ steps.images.outputs.ksm }}:${{ github.sha }}
+        run: bash ops/build-kube-state-metrics-image.sh
       - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -155,6 +179,15 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+      - name: Scan kube-state-metrics image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.images.outputs.ksm }}:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
       - name: Authenticate to GitHub Container Registry
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -164,7 +197,9 @@ jobs:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
           BACKUP_IMAGE: ${{ steps.images.outputs.backup }}
           PROXY_IMAGE: ${{ steps.images.outputs.proxy }}
+          KSM_IMAGE: ${{ steps.images.outputs.ksm }}
         run: |
           docker push "$RUNTIME_IMAGE:$GITHUB_SHA"
           docker push "$BACKUP_IMAGE:$GITHUB_SHA"
           docker push "$PROXY_IMAGE:$GITHUB_SHA"
+          docker push "$KSM_IMAGE:$GITHUB_SHA"

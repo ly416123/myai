@@ -7,7 +7,7 @@
 最近核对时间：2026-11-13。
 
 - 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL、监控和本地备份卷；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
+- Worker 2 副本；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、kube-state-metrics 各 1 副本。kube-state-metrics v2.20.0 只读 `myai` namespace 的 CronJob 和 Job。
 - PostgreSQL 16 使用 5 GiB `local-path` PVC；备份 CronJob 每日上海时间 02:00 写入同节点 5 GiB PVC，配置保留 30 天。异地副本和 CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
@@ -70,7 +70,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前规则含 Collector target down、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 7 条规则覆盖 Collector/KSM 抓取目标不可用、备份成功指标缺失或时间超过 30 小时、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。备份成功指标缺失持续 5 分钟即告警；指标存在但时间戳陈旧时，超过 30 小时再持续 5 分钟告警。备份规则读取 `kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"}`；可在 Prometheus 控制台查询该指标确认最近一次成功时间。30 小时是运维默认阈值，需结合实际 CronJob 调度和业务恢复目标再审定。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
@@ -102,11 +102,13 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
 3. 数据库恢复后确认 PostgreSQL Ready、Flyway/Worker 连接恢复，并观察租约接管。短暂数据库中断演练已有成功证据，但这不覆盖磁盘损坏或节点丢失。
 4. 如果怀疑数据损坏，先保留现场并核对最近成功备份及校验和；只有在恢复目标数据库明确且授权后才执行恢复。
 
-### Collector 或 Prometheus 不可用
+### Collector、kube-state-metrics 或 Prometheus 不可用
 
-1. 检查对应 Pod、PVC、事件和日志；Prometheus 是单副本，升级/重启期间本地查询可能短暂不可用。
-2. 规则健康与当前状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，API 中的 Pending/Firing 状态需要人工查看。
-3. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
+1. 检查对应 Pod、事件、日志与 Prometheus Targets API；Prometheus 是单副本，升级/重启期间本地查询可能短暂不可用。
+2. KSM 只需访问 `myai` namespace 的 CronJob/Job API。若 KSM 启动日志出现 Forbidden，检查 namespace Role/RoleBinding；若报连接超时，核对 L5 overlay 的 API `/32` NetworkPolicy 和 Service IP。不要扩大到 ClusterRole 或全网出站。
+3. 检查 `myai-kube-state-metrics` 抓取目标为 `up`，再核对 `kube_cronjob_status_last_successful_time` 是否包含备份 CronJob。目标恢复后，等待 Prometheus 下一次规则评估。
+4. 规则健康与告警状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，Pending/Firing 状态需要人工查看。
+5. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
 
 ## 5. Worker 版本回滚
 

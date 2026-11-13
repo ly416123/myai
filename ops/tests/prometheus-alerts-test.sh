@@ -13,6 +13,7 @@ cp "$repo_root/ops/monitoring/agent-alerts-test.yaml" "$stage_dir/agent-alerts-t
 
 docker run --rm \
   --platform "$platform" \
+  --tmpfs /tmp:rw,nosuid,nodev,size=256m \
   --volume "$stage_dir:/etc/prometheus:ro" \
   --entrypoint=/bin/promtool \
   "$prometheus_image" \

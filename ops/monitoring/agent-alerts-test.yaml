@@ -10,6 +10,8 @@ tests:
     input_series:
       - series: 'up{job="myai-otel-collector"}'
         values: "0+0x20"
+      - series: 'up{job="myai-kube-state-metrics"}'
+        values: "0+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "301+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -36,6 +38,22 @@ tests:
       - eval_time: 30s
         alertname: AgentDatabasePoolNearCapacity
         exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentKubeStateMetricsDown
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentBackupStale
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AgentBackupStale
+        exp_alerts:
+          - exp_labels:
+              namespace: myai
+              cronjob: myai-postgres-backup
+              severity: warning
+            exp_annotations:
+              summary: No successful PostgreSQL backup is visible within the freshness window
+              description: Check the CronJob, backup Job status, local backup PVC, and kube-state-metrics availability.
       - eval_time: 2m
         alertname: MyAiCollectorTargetDown
         exp_alerts:
@@ -44,6 +62,14 @@ tests:
               severity: warning
             exp_annotations:
               summary: MyAI telemetry collector metrics endpoint is unavailable
+      - eval_time: 2m
+        alertname: AgentKubeStateMetricsDown
+        exp_alerts:
+          - exp_labels:
+              job: myai-kube-state-metrics
+              severity: warning
+            exp_annotations:
+              summary: Kubernetes backup status metrics endpoint is unavailable
       - eval_time: 2m
         alertname: AgentExpiredRunLeases
         exp_alerts:
@@ -82,6 +108,10 @@ tests:
     input_series:
       - series: 'up{job="myai-otel-collector"}'
         values: "1+0x20"
+      - series: 'up{job="myai-kube-state-metrics"}'
+        values: "1+0x20"
+      - series: 'kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"}'
+        values: "0+30x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "300+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -108,3 +138,31 @@ tests:
       - eval_time: 10m
         alertname: AgentDatabasePoolNearCapacity
         exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentKubeStateMetricsDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentBackupStale
+        exp_alerts: []
+
+  - name: old backup success timestamp fires stale alert
+    interval: 5m
+    input_series:
+      - series: 'up{job="myai-kube-state-metrics"}'
+        values: "1+0x362"
+      - series: 'kube_cronjob_status_last_successful_time{namespace="myai",cronjob="myai-postgres-backup"}'
+        values: "0+0x362"
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: AgentBackupStale
+        exp_alerts: []
+      - eval_time: 30h10m
+        alertname: AgentBackupStale
+        exp_alerts:
+          - exp_labels:
+              namespace: myai
+              cronjob: myai-postgres-backup
+              severity: warning
+            exp_annotations:
+              summary: No successful PostgreSQL backup is visible within the freshness window
+              description: Check the CronJob, backup Job status, local backup PVC, and kube-state-metrics availability.

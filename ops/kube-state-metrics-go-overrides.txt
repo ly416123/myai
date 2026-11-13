@@ -1,0 +1,5 @@
+# Keep these dependency overrides synchronized with HIGH/CRITICAL vulnerability fixes.
+golang.org/x/crypto v0.55.0
+golang.org/x/net v0.62.0
+golang.org/x/text v0.41.0
+google.golang.org/grpc v1.83.2

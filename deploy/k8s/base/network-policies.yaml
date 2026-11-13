@@ -75,9 +75,30 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: myai-otel-collector
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-kube-state-metrics
       ports:
         - protocol: TCP
           port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: myai-kube-state-metrics-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: myai-kube-state-metrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -209,6 +230,13 @@ spec:
       ports:
         - protocol: TCP
           port: 9464
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-kube-state-metrics
+      ports:
+        - protocol: TCP
+          port: 8080
     - to:
         - namespaceSelector:
             matchLabels:

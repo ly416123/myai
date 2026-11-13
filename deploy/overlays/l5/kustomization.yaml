@@ -3,7 +3,12 @@ kind: Kustomization
 namespace: myai
 resources:
   - ../../k8s
+  - kube-state-metrics.yaml
+  - kube-state-metrics-egress.yaml
 images:
+  - name: registry.example.invalid/kube-state-metrics
+    newName: docker.io/library/myai-kube-state-metrics
+    newTag: v2.20.0-my.2
   - name: registry.example.invalid/myai
     newName: docker.io/library/myai-agent
     newTag: l5-20261113-egress-proxy
