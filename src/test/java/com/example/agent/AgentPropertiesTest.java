@@ -13,8 +13,11 @@ class AgentPropertiesTest {
         var properties = new AgentProperties();
 
         assertEquals("https://api.deepseek.com", properties.getModelBaseUrl());
+        assertEquals("", properties.getModelProxyUrl());
         properties.setModelBaseUrl("http://127.0.0.1:8080/v1");
         assertEquals("http://127.0.0.1:8080/v1", properties.getModelBaseUrl());
+        properties.setModelProxyUrl("http://myai-egress-proxy:3128");
+        assertEquals("http://myai-egress-proxy:3128", properties.getModelProxyUrl());
     }
 
     @Test

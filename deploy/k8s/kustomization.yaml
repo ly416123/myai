@@ -7,3 +7,4 @@ resources:
   - base/l5-postgres.yaml
   - base/postgres-backup-cronjob.yaml
   - base/network-policies.yaml
+  - base/model-egress-proxy.yaml

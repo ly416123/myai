@@ -131,8 +131,24 @@ class ContainerDeploymentContractTest {
         assertTrue(policies.contains("port: 9464"));
         assertTrue(policies.contains("name: myai-prometheus-ingress"));
         assertTrue(policies.contains("port: 9090"));
+        assertTrue(policies.contains("name: myai-default-deny-egress"));
+        assertTrue(policies.contains("name: myai-agent-egress"));
+        assertTrue(policies.contains("name: myai-egress-proxy-egress"));
+        assertTrue(policies.contains("port: 3128"));
+        assertTrue(policies.contains("port: 443"));
         assertTrue(taskJob.contains("app.kubernetes.io/component: task"));
-        assertFalse(policies.contains("ipBlock:\n            cidr: 0.0.0.0/0"));
+        assertTrue(taskJob.contains("name: AGENT_MODEL_PROXY_URL"));
+        String worker = Files.readString(Path.of("deploy/k8s/base/agent-worker-deployment.yaml"));
+        assertTrue(worker.contains("name: AGENT_MODEL_PROXY_URL"));
+        String proxy = Files.readString(Path.of("deploy/k8s/base/model-egress-proxy.yaml"));
+        String proxyAcl = Files.readString(Path.of("ops/squid-model-egress.conf"));
+        assertTrue(proxy.contains("registry.example.invalid/myai-model-egress-proxy"));
+        assertTrue(proxyAcl.contains("api.deepseek.com"));
+        assertTrue(proxyAcl.contains("http_access deny all"));
+        assertTrue(policies.contains("cidr: 0.0.0.0/0"));
+        assertTrue(policies.contains("              - 10.0.0.0/8"));
+        assertTrue(policies.contains("- 192.168.0.0/16"));
+        assertTrue(policies.contains("name: myai-agent-egress\n"));
     }
 
     @Test

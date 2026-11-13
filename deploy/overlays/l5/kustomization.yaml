@@ -6,9 +6,12 @@ resources:
 images:
   - name: registry.example.invalid/myai
     newName: docker.io/library/myai-agent
-    newTag: l5-20261113-runfailure-metric
+    newTag: l5-20261113-egress-proxy
   - name: registry.example.invalid/myai-postgres-backup
     newName: docker.io/library/myai-postgres-backup
+    newTag: l5-20261113
+  - name: registry.example.invalid/myai-model-egress-proxy
+    newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113
 replicas:
   - name: myai-agent-worker
@@ -36,3 +39,9 @@ patches:
                 env:
                   - name: AGENT_WORKER_CONCURRENCY
                     value: "1"
+  - target:
+      kind: Deployment
+      name: myai-model-egress-proxy
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/imagePullSecrets

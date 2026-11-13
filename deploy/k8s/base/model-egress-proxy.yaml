@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myai-model-egress-proxy
+  labels:
+    app.kubernetes.io/name: myai-model-egress-proxy
+    app.kubernetes.io/component: egress-proxy
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: myai-model-egress-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myai-model-egress-proxy
+        app.kubernetes.io/component: egress-proxy
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: myai-registry
+      containers:
+        - name: proxy
+          image: registry.example.invalid/myai-model-egress-proxy:REPLACE_WITH_VERSION
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: proxy, containerPort: 3128}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe:
+            tcpSocket: {port: proxy}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: proxy}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myai-model-egress-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: myai-model-egress-proxy
+  ports:
+    - {name: proxy, port: 3128, targetPort: proxy}

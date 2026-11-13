@@ -41,6 +41,8 @@ jobs:
         run: PATH="${GITHUB_WORKSPACE}/ops/.build:${PATH}" bash ops/tests/postgres-backup-restore-smoke.sh
       - name: Build runtime image
         run: docker build --tag myai-agent:${{ github.sha }} .
+      - name: Build model egress proxy image
+        run: docker build --file ops/egress-proxy.Dockerfile --tag myai-model-egress-proxy:${{ github.sha }} .
       - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -55,6 +57,15 @@ jobs:
         with:
           scan-type: image
           image-ref: myai-postgres-backup:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan model egress proxy image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: myai-model-egress-proxy:${{ github.sha }}
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -93,6 +104,7 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "runtime=ghcr.io/${owner}/myai-agent" >> "$GITHUB_OUTPUT"
           echo "backup=ghcr.io/${owner}/myai-postgres-backup" >> "$GITHUB_OUTPUT"
+          echo "proxy=ghcr.io/${owner}/myai-model-egress-proxy" >> "$GITHUB_OUTPUT"
       - name: Build runtime image
         run: >-
           docker build
@@ -105,6 +117,12 @@ jobs:
           --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
           --label "org.opencontainers.image.revision=${GITHUB_SHA}"
           --tag "${{ steps.images.outputs.backup }}:${GITHUB_SHA}" .
+      - name: Build model egress proxy image
+        run: >-
+          docker build --file ops/egress-proxy.Dockerfile
+          --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+          --tag "${{ steps.images.outputs.proxy }}:${GITHUB_SHA}" .
       - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -123,6 +141,15 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+      - name: Scan model egress proxy image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.images.outputs.proxy }}:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
       - name: Authenticate to GitHub Container Registry
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -131,6 +158,8 @@ jobs:
         env:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
           BACKUP_IMAGE: ${{ steps.images.outputs.backup }}
+          PROXY_IMAGE: ${{ steps.images.outputs.proxy }}
         run: |
           docker push "$RUNTIME_IMAGE:$GITHUB_SHA"
           docker push "$BACKUP_IMAGE:$GITHUB_SHA"
+          docker push "$PROXY_IMAGE:$GITHUB_SHA"

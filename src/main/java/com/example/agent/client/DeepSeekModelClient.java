@@ -34,7 +34,10 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.SocketTimeoutException;
+import java.net.URI;
 
 /**
  * DeepSeek Chat Completions 适配器，使用 OpenAI Java SDK 调用 DeepSeek 的兼容接口。
@@ -71,6 +74,11 @@ public final class DeepSeekModelClient implements ModelClient {
 
     /** Creates a client for the configured DeepSeek-compatible provider endpoint. */
     public DeepSeekModelClient(String apiKey, String model, Duration timeout, String baseUrl) {
+        this(apiKey, model, timeout, baseUrl, null);
+    }
+
+    /** Creates a client with an optional HTTP proxy used to control model-provider egress. */
+    public DeepSeekModelClient(String apiKey, String model, Duration timeout, String baseUrl, String proxyUrl) {
         if (apiKey == null || apiKey.isBlank()) throw new IllegalArgumentException("DeepSeek API key is required");
         if (model == null || model.isBlank()) throw new IllegalArgumentException("DeepSeek model is required");
         if (baseUrl == null || !isValidBaseUrl(baseUrl)) {
@@ -80,10 +88,27 @@ public final class DeepSeekModelClient implements ModelClient {
         this.client = OpenAIOkHttpClient.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
+                .proxy(createProxy(proxyUrl))
                 .timeout(timeout)
                 // 禁用 SDK 内部重试，确保每次模型请求和重试都由 Runtime 计数并受预算约束。
                 .maxRetries(0)
                 .build();
+    }
+
+    private static Proxy createProxy(String proxyUrl) {
+        if (proxyUrl == null || proxyUrl.isBlank()) return null;
+        try {
+            URI uri = URI.create(proxyUrl);
+            if (!"http".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                    || uri.getUserInfo() != null || uri.getPort() < 1 || uri.getPort() > 65535
+                    || uri.getQuery() != null || uri.getFragment() != null
+                    || uri.getPath() != null && !uri.getPath().isEmpty() && !uri.getPath().equals("/")) {
+                throw new IllegalArgumentException();
+            }
+            return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(uri.getHost(), uri.getPort()));
+        } catch (IllegalArgumentException invalidProxy) {
+            throw new IllegalArgumentException("A valid HTTP proxy URL is required");
+        }
     }
 
     private static boolean isValidBaseUrl(String baseUrl) {

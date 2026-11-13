@@ -66,7 +66,8 @@ public class AgentConfiguration {
         }
         validate(properties);
         String baseUrl = environment.getProperty("DEEPSEEK_BASE_URL", properties.getModelBaseUrl());
-        return new DeepSeekModelClient(apiKey.trim(), properties.getModel(), properties.getModelTimeout(), baseUrl);
+        return new DeepSeekModelClient(apiKey.trim(), properties.getModel(), properties.getModelTimeout(), baseUrl,
+                properties.getModelProxyUrl());
     }
 
     @Bean(destroyMethod = "close")

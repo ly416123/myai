@@ -19,6 +19,7 @@ agent:
   execution-mode: ${AGENT_EXECUTION_MODE:interactive}
   task: ${AGENT_TASK:}
   model: ${DEEPSEEK_MODEL:deepseek-flash}
+  model-proxy-url: ${AGENT_MODEL_PROXY_URL:}
   api-key-file: ${DEEPSEEK_KEY_FILE:deepseek.key}
   model-timeout: ${AGENT_MODEL_TIMEOUT:60s}
   tool-timeout: ${AGENT_TOOL_TIMEOUT:10s}

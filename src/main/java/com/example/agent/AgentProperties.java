@@ -11,6 +11,7 @@ import java.nio.file.Path;
 public class AgentProperties {
     private String model = "deepseek-flash";
     private String modelBaseUrl = "https://api.deepseek.com";
+    private String modelProxyUrl = "";
     private String apiKeyFile = "deepseek.key";
     private Duration modelTimeout = Duration.ofSeconds(60);
     private Duration toolTimeout = Duration.ofSeconds(10);
@@ -43,6 +44,8 @@ public class AgentProperties {
     public void setModel(String model) { this.model = model; }
     public String getModelBaseUrl() { return modelBaseUrl; }
     public void setModelBaseUrl(String modelBaseUrl) { this.modelBaseUrl = modelBaseUrl; }
+    public String getModelProxyUrl() { return modelProxyUrl; }
+    public void setModelProxyUrl(String modelProxyUrl) { this.modelProxyUrl = modelProxyUrl; }
     public String getApiKeyFile() { return apiKeyFile; }
     public void setApiKeyFile(String apiKeyFile) { this.apiKeyFile = apiKeyFile; }
     public Duration getModelTimeout() { return modelTimeout; }

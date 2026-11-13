@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -27,6 +28,50 @@ class DeepSeekModelClientContractTest {
                 "test-only-key", "deepseek-flash", Duration.ofSeconds(1), "https://user:secret@example.com/v1"));
         assertThrows(IllegalArgumentException.class, () -> new DeepSeekModelClient(
                 "test-only-key", "deepseek-flash", Duration.ofSeconds(1), "https://example.com/v1?token=secret"));
+        assertThrows(IllegalArgumentException.class, () -> new DeepSeekModelClient(
+                "test-only-key", "deepseek-flash", Duration.ofSeconds(1),
+                "https://api.deepseek.com", "socks5://proxy.internal:1080"));
+    }
+
+    @Test
+    void sendsProviderRequestThroughConfiguredHttpProxy() throws Exception {
+        AtomicReference<String> proxyRequestLine = new AtomicReference<>();
+        AtomicReference<Integer> providerRequests = new AtomicReference<>(0);
+        HttpServer provider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        provider.createContext("/chat/completions", exchange -> {
+            providerRequests.updateAndGet(count -> count + 1);
+            byte[] response = "{}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            try (var body = exchange.getResponseBody()) { body.write(response); }
+        });
+        provider.start();
+
+        try (ServerSocket proxy = new ServerSocket(0)) {
+            Thread proxyProbe = Thread.ofVirtual().start(() -> {
+                try (var socket = proxy.accept();
+                     var input = new java.io.BufferedReader(new java.io.InputStreamReader(
+                             socket.getInputStream(), StandardCharsets.US_ASCII))) {
+                    proxyRequestLine.set(input.readLine());
+                } catch (Exception ignored) {
+                    // The client is expected to observe a closed test proxy after it receives the request line.
+                }
+            });
+            proxy.setSoTimeout(2_000);
+
+            try (var client = new DeepSeekModelClient("test-only-key", "deepseek-flash", Duration.ofSeconds(2),
+                    "http://127.0.0.1:" + provider.getAddress().getPort(),
+                    "http://127.0.0.1:" + proxy.getLocalPort())) {
+                assertThrows(ModelClientException.class,
+                        () -> client.complete(List.of(Message.user("hello")), List.of()));
+            }
+
+            proxyProbe.join(2_000);
+            assertNotNull(proxyRequestLine.get());
+            assertTrue(proxyRequestLine.get().startsWith("POST http://127.0.0.1:"));
+            assertEquals(0, providerRequests.get(), "The client must not bypass the proxy");
+        } finally {
+            provider.stop(0);
+        }
     }
 
     @Test

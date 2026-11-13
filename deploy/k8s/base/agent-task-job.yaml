@@ -46,6 +46,11 @@ spec:
                 configMapKeyRef:
                   name: myai-runtime
                   key: model-base-url
+            - name: AGENT_MODEL_PROXY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: model-proxy-url
             - name: AGENT_DB_URL
               valueFrom:
                 configMapKeyRef:
