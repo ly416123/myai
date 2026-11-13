@@ -32,7 +32,9 @@ public final class TimeTool implements AgentTool {
 
     /** 模型请求中用于指向该工具的名称。 */
     @Override public String name() { return "current_time"; }
-    @Override public String description() { return "查询指定 IANA 时区的当前日期和时间，例如 Asia/Shanghai、Europe/Paris。"; }
+    @Override public String description() {
+        return "使用 Java 系统时钟查询指定 IANA 时区的当前日期和时间（非模拟、非外部 API），例如 Asia/Shanghai、Europe/Paris。";
+    }
     @Override public JsonNode inputSchema() { return SCHEMA.deepCopy(); }
 
     /** 用目标 ZoneId 生成当前时间，并返回时区和 ISO-8601 时间字符串。 */
@@ -43,6 +45,8 @@ public final class TimeTool implements AgentTool {
             ObjectNode output = JSON.createObjectNode();
             output.put("timezone", timezone);
             output.put("dateTime", now.format(DateTimeFormatter.ISO_ZONED_DATE_TIME));
+            output.put("source", "java.time.ZonedDateTime.now(ZoneId)");
+            output.put("simulated", false);
             return output;
         } catch (DateTimeException e) {
             throw new IllegalArgumentException("无效的时区: " + timezone, e);

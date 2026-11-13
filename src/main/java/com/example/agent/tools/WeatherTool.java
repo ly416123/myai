@@ -39,6 +39,7 @@ public final class WeatherTool implements AgentTool {
         output.put("temperatureCelsius", 22);
         output.put("humidityPercent", 45);
         output.put("source", "模拟数据，仅用于演示");
+        output.put("simulated", true);
         return output;
     }
 }

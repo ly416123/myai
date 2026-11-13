@@ -187,7 +187,7 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
     export AGENT_EVAL_MAX_CASES=5 AGENT_EVAL_MAX_MODEL_CALLS=16 AGENT_EVAL_MAX_TOOL_CALLS=10
     mvn spring-boot:run
 
-评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准是流程成功、工具列表符合样例预期，且样例声明了协作路由/Worker 时计划也符合预期，不代表回答质量已经达标。
+评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准是流程成功、工具列表符合样例预期，且样例声明了协作路由/Worker 时计划也符合预期，不代表回答质量已经达标。2026-11-12 的真实模型报告中，时间查询样例调用了真实 Java 系统时钟，但回答误称其为模拟数据；本次为 `current_time` 和模拟天气结果增加显式来源/模拟标志及回归测试。尚未用真实模型复测这一修正，人工评分仍为空。
 
 报告包含模型回答，POSIX 文件系统上使用权限为 0700 的独立目录和 0600 的文件；默认写入已加入 Git 忽略规则的 `var/agent-evaluations`，不会被 `mvn clean` 删除。如果在只读容器中运行，需要把 `AGENT_EVAL_REPORT_DIRECTORY` 指向一个专用可写挂载点。评测数据中的用户提示会写入 PostgreSQL Run 历史，执行前应确认数据库保留策略适用。该入口不读取 Fake/Mock ModelClient，也不把真实评测加入 CI。
 
