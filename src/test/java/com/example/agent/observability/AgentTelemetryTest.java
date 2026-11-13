@@ -8,7 +8,19 @@ import com.example.agent.workflow.RunStep;
 import com.example.agent.workflow.RunStepStatus;
 import com.example.agent.workflow.StepKind;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.context.Scope;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SpanProcessor;
+import io.opentelemetry.sdk.trace.ReadWriteSpan;
+import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.trace.data.SpanData;
+import io.micrometer.tracing.BaggageManager;
+import io.micrometer.tracing.handler.DefaultTracingObservationHandler;
+import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext;
+import io.micrometer.tracing.otel.bridge.OtelTracer;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -17,6 +29,69 @@ import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AgentTelemetryTest {
+    @Test
+    void capturesAndRestoresW3cParentAcrossWorkerBoundary() {
+        var exported = new java.util.concurrent.ConcurrentLinkedQueue<SpanData>();
+        var provider = SdkTracerProvider.builder().addSpanProcessor(new SpanProcessor() {
+            @Override public void onStart(io.opentelemetry.context.Context parent, ReadWriteSpan span) { }
+            @Override public boolean isStartRequired() { return false; }
+            @Override public void onEnd(ReadableSpan span) { exported.add(span.toSpanData()); }
+            @Override public boolean isEndRequired() { return true; }
+        }).build();
+        try {
+            var currentTraceContext = new OtelCurrentTraceContext();
+            var micrometerTracer = new OtelTracer(provider.get("trace-context-test"), currentTraceContext,
+                    ignored -> { }, BaggageManager.NOOP);
+            ObservationRegistry observations = ObservationRegistry.create();
+            observations.observationConfig().observationHandler(new DefaultTracingObservationHandler(micrometerTracer));
+            var telemetry = new AgentTelemetry(null, observations);
+            var root = provider.get("trace-context-test").spanBuilder("external-root").startSpan();
+            String traceId;
+            String runSpanId;
+            java.util.Map<String, String> carrier;
+            RunRecord run = RunRecord.create("trace-run", "safe input", Duration.ofMinutes(1));
+            RunStep worker = RunStep.workflow("worker-step", StepKind.WORKER, "task", "writer", "WORKER", Instant.now());
+            RunStep model = RunStep.modelStarted("model-step", Instant.now());
+            try (Scope ignored = root.makeCurrent()) {
+                var runObservation = telemetry.startRun(run, "collaborative");
+                try (Observation.Scope runScope = runObservation.openScope()) {
+                    traceId = io.opentelemetry.api.trace.Span.current().getSpanContext().getTraceId();
+                    runSpanId = io.opentelemetry.api.trace.Span.current().getSpanContext().getSpanId();
+                    carrier = telemetry.captureCurrentTraceContext();
+                }
+                runObservation.stop();
+            } finally {
+                root.end();
+            }
+            assertTrue(carrier.containsKey("traceparent"));
+            assertTrue(carrier.keySet().stream().allMatch(key ->
+                    key.equals("traceparent") || key.equals("tracestate")));
+
+            Observation workerObservation;
+            try (Scope remoteParent = telemetry.restoreTraceContext(carrier)) {
+                workerObservation = telemetry.startStep(run, worker, "collaborative");
+            }
+            try (Observation.Scope workerScope = workerObservation.openScope()) {
+                Observation modelObservation = telemetry.startStep(run, model, "collaborative");
+                modelObservation.stop();
+            }
+            workerObservation.stop();
+
+            SpanData workerSpan = exported.stream()
+                    .filter(span -> "worker-step".equals(span.getAttributes().get(AttributeKey.stringKey("step.id"))))
+                    .findFirst().orElseThrow();
+            SpanData modelSpan = exported.stream()
+                    .filter(span -> "model-step".equals(span.getAttributes().get(AttributeKey.stringKey("step.id"))))
+                    .findFirst().orElseThrow();
+            assertEquals(traceId, workerSpan.getTraceId());
+            assertEquals(runSpanId, workerSpan.getParentSpanId());
+            assertEquals(traceId, modelSpan.getTraceId());
+            assertEquals(workerSpan.getSpanId(), modelSpan.getParentSpanId());
+        } finally {
+            provider.close();
+        }
+    }
+
     @Test
     void publishesBacklogLeaseAndOldestWaitGaugesWithoutRunIdentifiers() {
         var meters = new SimpleMeterRegistry();
