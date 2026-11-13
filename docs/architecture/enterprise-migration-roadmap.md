@@ -50,22 +50,22 @@ flowchart LR
 | 阶段 3：Supervisor–Worker 执行 | 默认 `CollaborativeWorkflow` 在单 JVM 固定线程池并行；Worker 和工具静态注册；单父 Run 保存子任务。 | 父 Run/子任务的数据库事务边界明确；任务可被多实例安全 claim/续租/恢复；可按容量独立扩缩容；Worker 权限、取消、重试和状态变更可审计。 | 已提供数据库轮询的独立子任务 Worker，可通过 `AGENT_SEPARATE_TASK_WORKERS=true` 启用；默认 CLI 仍使用本地线程池。数据库仍是任务事实来源，不需要 MQ。仍需做多进程/Pod 崩溃演练，并按副作用工具定义幂等/补偿协议。 |
 | 阶段 3：测试与评测 | Fake ModelClient、固定 Fake 任务和内存 Store 验证确定性流程；没有真实模型质量基线。 | 分层测试：单元 Fake、Provider HTTP 契约测试、PostgreSQL 集成测试、并发/故障测试、版本化 Agent 评测集和受控真实模型评测。 | Fake 保留在测试代码中；新增 HTTP Mock Server 验证 SDK 适配器协议，Testcontainers 验证迁移和数据库并发，真实模型评测独立运行并控制费用/数据。 |
 
-## 4. 存储、队列与恢复的建议
+## 4. 存储、队列与恢复的方案与决策
 
-### 4.1 PostgreSQL 作为第一步
+### 4.1 PostgreSQL 当前主存储
 
-当前系统以可恢复的 Run 状态为中心，首先需要事务、并发条件更新和查询能力。建议 PostgreSQL 做唯一主数据源，使用 Flyway 管理迁移；应用通过 Spring JDBC 或 jOOQ 访问，不让 JPA 实体成为状态机的隐式行为层。
+生产装配已使用 PostgreSQL 作为 Run 与 Checkpoint 的主存储，并由 Flyway 管理 schema；`PostgresRunStore` 通过 Spring JDBC 执行显式 SQL 和短事务，避免把状态迁移交给 JPA 实体隐式处理。InMemory/JSON Store 仅作为测试和本地开发替代实现，不是生产数据源。
 
-建议的最小实体边界：
+当前持久化实体边界：
 
-- `agent_run`：`run_id`、`run_type`、状态、输入引用、最终结果引用、deadline、版本号、租约持有者与过期时间、创建/更新时间。
+- `agent_run`：`run_id`、`run_type`、状态、用户输入、最终回答、deadline、版本号、fencing token、租约持有者与过期时间、创建/更新时间。
 - `run_message`：按顺序保存消息与必要的工具调用上下文；支持敏感字段保护、访问审计和保留期限。
 - `run_step`：模型、工具、规划、汇总等步骤的状态、耗时、失败类别和 Token 用量。
 - `tool_execution_audit`：工具步骤状态变化的追加式安全审计元数据；仅保存 Run/步骤/工具调用标识、工具名、状态、失败类别、Worker 和时间，不复制参数、结果或异常内容；通过外键随 Run 保留清理级联删除。
 - `child_task`：父 Run、任务/Worker ID、依赖、状态、尝试次数、租约和交付结果引用。
-- `outbox_event`：仅当需在提交 Run 事务后可靠通知队列/其他服务时启用。
+- `outbox_event`：当前未实现；只有需在提交 Run 事务后可靠通知队列/其他服务时才启用。
 
-`RunStore` 需要提供原子认领、续租和带版本/租约条件的状态更新能力，不能只保留当前的 `save/find/list` 接口。认领/状态迁移使用事务和条件更新，不能依赖 JVM 内锁。每次认领生成单调递增的 fencing token（或等价版本令牌）；所有结果写回都校验当前令牌，拒绝已失去租约的旧执行者写入。模型 HTTP 调用和外部工具执行不应放在长数据库事务内；在外部调用前持久化意图，结束后以条件更新记录结果。若租约过期时外部调用仍在执行，令牌只能阻止旧执行者覆盖状态，不能撤销其外部副作用；该工具步骤仍须记录为结果未知，并按工具幂等/查询能力决定后续处理。
+`PostgresRunStore` 已实现原子 claim、租约续期、乐观版本更新和 fencing 条件写入；父/子任务 claim 与状态写回均由数据库条件更新约束，不依赖跨实例 JVM 锁。模型和工具调用在数据库事务之外执行，调用意图/步骤状态先持久化，再单独保存结果。若租约过期时外部调用仍在运行，fencing 只能阻止旧执行者覆盖数据库状态，不能撤销外部副作用；当前未知结果步骤不会自动重放。没有外部事件/消息代理需要与 Run 事务原子发布，因此当前不启用 `outbox_event`；若未来增加可靠事件发布，再将事务 Outbox 纳入对应交付范围。
 
 子任务租约持久化其父 Run fencing token。父 Run 被新 Supervisor 认领后，即使旧子任务租约的时间尚未到期，也可立即被重新认领；子任务 fencing 序号递增，旧执行者会被拒绝。此机制解决崩溃恢复时父租约和子租约期限错位。启用独立任务 Worker 后，Worker 按轮询周期续租子任务并单独保存任务消息/步骤；Supervisor 从 PostgreSQL 刷新任务状态。父 Run 重新 fencing 时，旧子 Worker 写入会被拒绝。租约和 fencing 只能阻止陈旧状态写入，不能撤销已经开始的外部副作用。
 
@@ -126,7 +126,7 @@ Run Observation 已在单 Agent 与 Supervisor 执行期间保持 scope；模型
 | P2：可靠性与数据治理 | 工具调用未知副作用不自动重放；终态 Run 可按配置保留周期清理，删除操作有不含敏感运行数据的审计记录。工具调用状态变更已有独立追加式审计表及 CLI 查询，审计记录不含参数、结果或异常原文，并与 Run 保留删除级联。按用户当前决策，不重建数据库备份/恢复能力；L5 既有归档 PVC/PV 和归档数据已删除。当前没有外部副作用工具；未来此类工具的幂等/补偿协议须作为上线门槛。数据分类与删除请求流程尚未完成；节点/数据卷损坏可能造成持久 Run 数据丢失。 | Run 清理单元与 PostgreSQL 级联/审计集成测试通过。备份/恢复脚本与保留测试已随用户决策移除，之前的手动加密备份与隔离恢复仅属于历史验证。继续明确 exactly-once 限制，并按工具逐项定义幂等、补偿或人工核对方式。 |
 | P2：评测与安全验收 | Fake 回归、Provider 协议 Stub 和显式启用的真实模型评测 Runner 已提供。Runner 从版本化场景文件读取合成样例，记录工具选择、Run 状态、调用预算、Token 用量、协作计划摘要和人工评分字段；费用只在 Token 用量与调用方配置的单价均已知时估算。CI 不触发真实模型。CI 已配置 Gitleaks 全 Git 历史凭据扫描、应用与模型出站代理镜像 HIGH/CRITICAL 漏洞门禁和仓库 Docker/Kubernetes 配置扫描；第三方 Actions 已固定到完整提交 SHA，checkout 不持久化工作流凭据，并由 Dependabot 每周检查 GitHub Actions 更新。 | 本地 Git 历史/工作区 Gitleaks 扫描无命中；本地 Trivy 对应用镜像、模型出站代理镜像及 K8s/Docker 配置扫描均无 HIGH/CRITICAL 项（Prometheus 第三方镜像单独有已知 HIGH CVE，按用户决定继续使用）。本地契约测试锁定全部 Action SHA、每周更新配置和 Actionlint v1.7.12 发布归档 SHA-256；Actionlint 已纳入 Java 构建前的 CI 步骤，本地检查当前工作流无发现。远端 CI 尚未运行，流水线门禁仍需由实际运行确认；近期用户暂缓推送，待重新授权发布后再验证远端流水线。Fake 测试验证 Runner 的预算、结果字段、权限和计划摘要；两次 DeepSeek Flash 运行各 5/5 符合流程/工具/路由断言。尚需人工文本质量评价、真实费用单价和远端 CI 结果。 |
 
-不要先把 4 CPU 单节点 l5 宣称为高可用生产集群。它适合当前的开发、集成或受控验证环境；正式可用性目标若要求节点故障时不中断，需要多节点 K3s/Kubernetes、独立持久存储和备份恢复设计。
+不要把 4 CPU 单节点 L5 宣称为高可用生产集群。它适合当前开发、集成或受控验证；节点故障时不中断需要多节点 K3s/Kubernetes 和具备故障切换能力的持久存储。数据库与 Trace 备份/恢复已按项目决策移除，不属于当前交付；因此单节点或 PVC 损坏可能造成 Run、Checkpoint 与 Trace 不可恢复。若未来业务提出灾难恢复目标，须另行明确范围和责任后再决策，不应将其表述为本方案当前待实现功能。
 
 l5 没有 Docker/Compose 命令不妨碍 K3s 运行容器：CI 已配置默认分支 GHCR 发布和镜像扫描，但没有远端工作流结果，实际镜像发布与集群拉取尚未验证；部署前需确认镜像仓库可达并提供拉取凭据。Job/Worker 清单通过只读 Secret 文件挂载 Provider Key，Pod 禁止自动挂载 ServiceAccount Token；当前默认 ServiceAccount 的 `get/list secrets` 授权检查为 `no`。但 l5 `agentteams` 命名空间仍存在一个既有 token-refresh ServiceAccount RoleBinding，允许其 `get/patch secrets`，这属于集群范围 Secret 治理与本应用隔离验收的待审项。2026-11-13 已在 l5 启用 Kubernetes Secret 静态加密并完成既有集群密钥轮换；`k3s secrets-encrypt status` 返回 `Enabled / reencrypt_finished` 且所有 Server 密钥哈希一致。轮换前已创建并本地 age 加密控制面恢复包，包含 SQLite 一致性副本、Server token、加密配置及 systemd 配置；解密到临时文件核验归档内容与 SQLite `integrity_check=ok` 后删除临时明文。轮换后通过只读 SQLite 一致性副本再次核验 `integrity_check=ok`，28 个当前 Secret 对象的 value 与 old_value 均带 `k8s:enc:` 前缀；没有读取或输出 Secret 内容。K3s 官方对既有集群启用及密钥轮换的步骤见[官方流程](https://docs.k3s.io/cli/secrets-encrypt)。后续只读审查确认，token-refresh Role 仅允许对 `agentteams-chatgpt-oauth-session` 命名 Secret 执行 get/patch；对应 Helm CronJob 已 suspended，当前无活动 Pod。RBAC 的具体 Secret 访问通过 `kubectl auth can-i` 验证为允许，访问另一个 Secret 为拒绝。由于这是其他 Helm release 管理的配置且作用范围已限定，予以保留，不与 MyAI Secret 混用。只有确有 l5 本地构建需求时，才评估 BuildKit 等工具及其磁盘/内存占用。
 
