@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tempo
-          image: grafana/tempo:2.10.10 # linux/amd64 manifest sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867
+          image: grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea
           imagePullPolicy: IfNotPresent
           args: [--target=all, --config.file=/etc/tempo/config.yaml]
           ports:

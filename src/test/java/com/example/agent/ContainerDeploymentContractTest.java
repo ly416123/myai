@@ -28,6 +28,20 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
+    void thirdPartyKubernetesImagesArePinnedToVerifiedDigests() throws Exception {
+        String postgres = Files.readString(Path.of("deploy/k8s/base/l5-postgres.yaml"));
+        String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
+        String tempo = Files.readString(Path.of("deploy/k8s/base/tempo.yaml"));
+        String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
+
+        assertTrue(postgres.contains("image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"));
+        assertTrue(foundation.contains("image: otel/opentelemetry-collector-contrib:0.165.0@sha256:bda8c1d727effc2f937d2a3470ea3f9ee189b8dd96d2385a2475b0b6f16ec3f8"));
+        assertTrue(foundation.contains("image: prom/prometheus:v3.16.0@sha256:89c1a644817e9ad70fa2af76c84898e327c1de7063735f962e8313b1e28672c3"));
+        assertTrue(tempo.contains("image: grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea"));
+        assertTrue(grafana.contains("image: grafana/grafana:12.4.15@sha256:1b9f34ccb7441bb254a70f25fb98f0e1f0b5c7a043191b2b678f6b77fc108ef2"));
+    }
+
+    @Test
     void imageBuildCannotCopyLocalCredentialsAndRunsAsNonRoot() throws Exception {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
         String ignore = Files.readString(Path.of(".dockerignore"));
@@ -160,8 +174,7 @@ class ContainerDeploymentContractTest {
 
         assertTrue(kustomization.contains("base/tempo.yaml"));
         assertTrue(kustomization.contains("base/grafana.yaml"));
-        assertTrue(tempo.contains("grafana/tempo:2.10.10"));
-        assertTrue(tempo.contains("linux/amd64 manifest sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867"));
+        assertTrue(tempo.contains("grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea"));
         assertTrue(tempo.contains("--target=all"));
         assertTrue(tempo.contains("type: Recreate"));
         assertTrue(tempoConfig.contains("backend: local"));
@@ -175,8 +188,7 @@ class ContainerDeploymentContractTest {
         assertTrue(tempo.contains("name: myai-tempo-data"));
         assertTrue(tempo.contains("storage: 10Gi"));
         assertTrue(tempo.contains("type: ClusterIP"));
-        assertTrue(grafana.contains("grafana/grafana:12.4.15"));
-        assertTrue(grafana.contains("linux/amd64 manifest sha256:e8e2751f6d838529b13c5f876791404d0e2c35171f9638ee3ae56835e34226a9"));
+        assertTrue(grafana.contains("grafana/grafana:12.4.15@sha256:1b9f34ccb7441bb254a70f25fb98f0e1f0b5c7a043191b2b678f6b77fc108ef2"));
         assertTrue(grafana.contains("type: Recreate"));
         assertTrue(grafana.contains("name: GF_AUTH_ANONYMOUS_ENABLED"));
         assertTrue(grafana.contains("value: \"false\""));
