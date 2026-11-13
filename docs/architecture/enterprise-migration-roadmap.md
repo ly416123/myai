@@ -3,6 +3,8 @@
 **文档状态：** 实施中（2026-11-14 更新）。当前已交付 Spring Boot 模块化单体、PostgreSQL/Flyway RunStore、带租约与 fencing 的多 Worker 协调、Supervisor–Worker、Micrometer/OTel、Provider 契约、Testcontainers、K3s 部署、确定性评测，以及 L5 内部 Tempo/Grafana Trace 查询和 MyAI Runtime Overview 指标仪表盘。MyAI 不提供数据库或 Trace 备份/恢复功能；L5 单节点本地 PVC 损坏仍可能导致 Run/Checkpoint/Trace 丢失。L5 保留 6 条 Prometheus 应用/可观测性告警规则与本地状态，告警通知投递仍暂缓。此前的 PostgreSQL 备份恢复演练属于功能存在期间的历史事实，不代表当前能力；最新验收结果见文档末尾实施记录。单节点 L5 仍不是高可用环境。
 
 **范围决定：短期不交付 HTTP API 和生产身份认证/授权。数据库备份/恢复功能和 L5 遗留归档数据已删除。CA 签名密钥故障/托管方案和告警通知投递暂缓；Prometheus 应用规则与本地告警状态继续保留。Fake/Mock 仅用于自动化测试，不用于生产装配。** Trace 查询后端已在 L5 部署并用合成数据完成端到端验证，但仅为单节点本地存储，无备份或节点恢复保证。路线图未收尾项包括：新增外部副作用工具前定义幂等/补偿协议；业务 SLO 与数据分类/保留期限确认；远端 GitHub CI 验收（当前未推送）。当前三项演示工具为本地计算、时间查询和模拟天气，不产生外部副作用；运行中断后未知结果的工具步骤不会自动重放。Prometheus v3.16.0 按用户决定继续使用，不再投入升级工作；其 Trivy HIGH CVE-2026-78661 作为已知风险保留记录。
+
+**远端同步状态（2026-11-14）：** 本地 `main` 当前比 GitHub `main` 多 27 个提交、没有远端独有提交；GitHub `main` 仍为 `612810e3832bfdd09d0aea65122f8464cc9a215c`。只读检查发现远端仍有 `deploy/k8s/base/postgres-backup-cronjob.yaml`，远端 `.github/workflows/ci.yml` 仍执行备份/恢复测试并构建、扫描备份镜像；因此用户决定移除备份功能尚未同步到 GitHub。按用户后续“先不推送远程”的指示，本地未推送；远端分支不是当前期望状态，不能据此部署或代表本地验收结果。
 ## 1. 结论
 
 MyAi 的目标是企业级 Agent Runtime。阶段 1–3 形成了可运行的核心循环、运行状态和 Supervisor–Worker 协作，但早期为控制复杂度采用的 CLI、本地 JSON Store、单进程调度和本地日志，不具备多实例生产运行所需的持久化一致性、集中可观测和运维能力。
