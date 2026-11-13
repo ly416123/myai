@@ -1,0 +1,15 @@
+.git
+.idea
+target/*
+!target/minimal-agent-runtime-1.0-SNAPSHOT.jar
+.env
+.env.*
+!.env.example
+deepseek.key
+*.log
+data/
+runtime-data/
+backups/
+ops/backups/
+*.dump.age
+*.dump.age.sha256

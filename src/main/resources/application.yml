@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: myai-agent-runtime
+  main:
+    web-application-type: none
+  datasource:
+    url: ${AGENT_DB_URL:jdbc:postgresql://localhost:5432/myai}
+    username: ${AGENT_DB_USERNAME:myai}
+    password: ${AGENT_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${AGENT_DB_POOL_SIZE:10}
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+
+agent:
+  cli:
+    enabled: true
+  execution-mode: ${AGENT_EXECUTION_MODE:interactive}
+  task: ${AGENT_TASK:}
+  model: ${DEEPSEEK_MODEL:deepseek-flash}
+  api-key-file: ${DEEPSEEK_KEY_FILE:deepseek.key}
+  model-timeout: ${AGENT_MODEL_TIMEOUT:60s}
+  tool-timeout: ${AGENT_TOOL_TIMEOUT:10s}
+  task-timeout: ${AGENT_TASK_TIMEOUT:5m}
+  run-lease-duration: ${AGENT_RUN_LEASE_DURATION:30s}
+  run-lease-renewal-interval: ${AGENT_RUN_LEASE_RENEWAL_INTERVAL:10s}
+  max-model-calls: ${AGENT_MAX_MODEL_CALLS:10}
+  max-tool-calls: ${AGENT_MAX_TOOL_CALLS:20}
+  max-model-retries: ${AGENT_MAX_MODEL_RETRIES:2}
+  max-tasks: ${AGENT_MAX_TASKS:8}
+  max-parallelism: ${AGENT_MAX_PARALLELISM:2}
+  separate-task-workers: ${AGENT_SEPARATE_TASK_WORKERS:false}
+  worker-concurrency: ${AGENT_WORKER_CONCURRENCY:4}
+  worker-poll-interval: ${AGENT_WORKER_POLL_INTERVAL:1s}
+  retention-period: ${AGENT_RUN_RETENTION_PERIOD:PT0S}
+  retention-batch-size: ${AGENT_RUN_RETENTION_BATCH_SIZE:500}
+  retention:
+    interval: ${AGENT_RUN_RETENTION_INTERVAL:PT24H}
+    initial-delay: ${AGENT_RUN_RETENTION_INITIAL_DELAY:PT1M}
+  evaluation-enabled: ${AGENT_EVAL_ENABLED:false}
+  evaluation-dataset: ${AGENT_EVAL_DATASET:eval/scenarios-v1.json}
+  evaluation-report-directory: ${AGENT_EVAL_REPORT_DIRECTORY:var/agent-evaluations}
+  evaluation-max-cases: ${AGENT_EVAL_MAX_CASES:5}
+  evaluation-max-model-calls: ${AGENT_EVAL_MAX_MODEL_CALLS:16}
+  evaluation-max-tool-calls: ${AGENT_EVAL_MAX_TOOL_CALLS:10}
+  evaluation-timeout: ${AGENT_EVAL_TIMEOUT:PT10M}
+  evaluation-input-usd-per-million-tokens: ${AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS:}
+  evaluation-output-usd-per-million-tokens: ${AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS:}
+
+logging:
+  structured:
+    format:
+      console: logstash
+  level:
+    root: INFO
+
+management:
+  endpoints:
+    enabled-by-default: false
+  tracing:
+    sampling:
+      probability: ${AGENT_TRACE_SAMPLING:0.1}
+  otlp:
+    tracing:
+      export:
+        enabled: ${AGENT_OTLP_TRACES_ENABLED:false}
+      endpoint: ${AGENT_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+    metrics:
+      export:
+        enabled: ${AGENT_OTLP_METRICS_ENABLED:false}
+        url: ${AGENT_OTLP_METRICS_ENDPOINT:http://localhost:4318/v1/metrics}

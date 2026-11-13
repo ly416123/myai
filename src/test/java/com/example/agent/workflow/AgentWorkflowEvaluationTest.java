@@ -321,6 +321,41 @@ class AgentWorkflowEvaluationTest {
     }
 
     @Test
+    void anotherRuntimeInstanceCanRequestCancellationThroughRunStore() throws Exception {
+        ToolRegistry tools = new ToolRegistry();
+        CountDownLatch requestStarted = new CountDownLatch(1);
+        AtomicInteger interruptedCalls = new AtomicInteger();
+        ModelClient blockingModel = (messages, definitions) -> {
+            requestStarted.countDown();
+            try { Thread.sleep(5_000); }
+            catch (InterruptedException interrupted) {
+                interruptedCalls.incrementAndGet();
+                Thread.currentThread().interrupt();
+            }
+            return new ModelResponse("late", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor firstExecutor = new ToolExecutor(tools, Duration.ofSeconds(1));
+             ToolExecutor secondExecutor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            RuntimeConfig config = new RuntimeConfig(5, 2, 0, Duration.ofSeconds(10));
+            AgentRuntime activeRuntime = runtime(blockingModel, tools, firstExecutor, store, config);
+            AgentRuntime cancellationRuntime = runtime(blockingModel, tools, secondExecutor, store, config);
+            AtomicReference<RunRecord> result = new AtomicReference<>();
+            Thread worker = Thread.ofVirtual().start(() -> result.set(activeRuntime.runTracked("cancel across instances")));
+            assertTrue(requestStarted.await(2, TimeUnit.SECONDS));
+            String runId = store.list().getFirst().runId();
+
+            cancellationRuntime.cancelRun(runId);
+            worker.join(2_000);
+
+            assertFalse(worker.isAlive());
+            assertEquals(1, interruptedCalls.get());
+            assertEquals(RunStatus.CANCELLED, result.get().status());
+            assertEquals(RunStatus.CANCELLED, store.find(runId).orElseThrow().status());
+        }
+    }
+
+    @Test
     void toolTimeoutIsIndeterminateAndIsNotTreatedAsAReversibleFailure() throws Exception {
         ToolRegistry tools = new ToolRegistry();
         AtomicInteger sideEffectStarted = new AtomicInteger();

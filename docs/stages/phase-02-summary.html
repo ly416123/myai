@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MyAi 项目阶段二的实现总结与验收记录">
+  <title>阶段二总结：有状态 Agent Workflow</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202b;
+      --muted: #536273;
+      --line: #d9e0e8;
+      --paper: #ffffff;
+      --canvas: #f2f5f8;
+      --accent: #176b5b;
+      --accent-soft: #e5f3ef;
+      --warn: #80520b;
+      --warn-soft: #fff4dc;
+      --good: #17633e;
+      --good-soft: #e6f4eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    main { width: min(920px, calc(100% - 32px)); margin: 40px auto 72px; }
+    header, section, footer { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 26px 30px; margin: 18px 0; }
+    header { border-top: 5px solid var(--accent); }
+    h1, h2, h3 { line-height: 1.3; }
+    h1 { font-size: clamp(28px, 5vw, 40px); margin: 8px 0 12px; }
+    h2 { font-size: 22px; margin: 0 0 16px; }
+    h3 { font-size: 17px; margin: 22px 0 8px; }
+    p { margin: 8px 0 14px; }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+    .lead { color: var(--muted); font-size: 18px; max-width: 70ch; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .pill { border-radius: 999px; background: var(--accent-soft); color: var(--accent); padding: 4px 11px; font-size: 14px; font-weight: 650; }
+    .result { border-left: 4px solid var(--good); background: var(--good-soft); padding: 14px 18px; border-radius: 8px; }
+    .caveat { border-left: 4px solid #d59b25; background: var(--warn-soft); padding: 14px 18px; border-radius: 8px; }
+    figure { margin: 16px 0 8px; }
+    figure svg { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+    figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 6px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+    th { background: #f7f9fb; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: #f0f3f6; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+    pre { background: #111b25; color: #e9f0f6; padding: 16px; border-radius: 9px; overflow-x: auto; }
+    a { color: var(--accent); }
+    footer { color: var(--muted); font-size: 14px; }
+    @media (max-width: 640px) {
+      main { width: min(100% - 20px, 920px); margin-top: 12px; }
+      header, section, footer { padding: 20px 18px; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">MyAi · 阶段交付记录</div>
+    <h1>阶段二：有状态 Agent Workflow</h1>
+    <p class="lead">在基础模型—工具循环之上，加入可追踪运行状态、检查点保存与恢复、执行预算、本地可观测记录和确定性回归评测。</p>
+    <div class="meta">
+      <span class="pill">项目：Java 21 + Maven</span>
+      <span class="pill">结论：验收通过</span>
+      <span class="pill">测试：20 项通过</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>验收结论</h2>
+    <p class="result"><strong>阶段二通过验收。</strong> 取消模型请求时的中断处理和取消与成功提交之间的竞态，经过补充实现与回归测试后已复验通过。干净 Maven 构建成功，全部 20 项测试通过。</p>
+    <p>验收命令：</p>
+    <pre><code>mvn -f /Users/gecko/code/MyAi/pom.xml clean test</code></pre>
+    <p>结果：30 个生产源码文件、5 个测试源码文件完成干净编译；20 项测试通过，0 失败、0 错误。测试不访问真实模型服务，也不读取真实 API Key。</p>
+  </section>
+
+  <section>
+    <h2>上一阶段的问题</h2>
+    <p>阶段一完成了单次模型与工具交互循环，但运行上下文仅保存在内存中。项目缺少任务 ID、生命周期状态、持久化检查点和恢复入口，也没有对任务总工具调用量、失败类别及执行耗时做统一记录。</p>
+    <ul>
+      <li>进程中断后无法知道任务停在哪一步，也无法安全恢复。</li>
+      <li>工具执行可能产生外部副作用，直接重放存在重复操作风险。</li>
+      <li>模型调用轮数之外，缺少总工具调用数和任务时限等预算边界。</li>
+      <li>仅凭最终回答难以判断模型调用、工具执行和故障恢复的过程。</li>
+      <li>没有可重复的固定样例验证边界行为和恢复语义。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>本阶段解决的问题与设计</h2>
+    <table>
+      <thead><tr><th>问题</th><th>实现方式</th><th>选型与设计理由</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>任务状态不明确、无法恢复</td>
+          <td>增加 <code>RunRecord</code>、<code>RunStatus</code>、状态变更记录和 <code>RunStore</code> 抽象；实现内存 Store 与本地 JSON 文件 Store。</td>
+          <td>保留存储边界，使 Runtime 不依赖具体介质。阶段二按当时范围采用 JSON 文件和原子替换作为单机实现；它不提供跨进程锁、事务协调、集群高可用或生产数据治理能力。</td>
+        </tr>
+        <tr>
+          <td>工具调用崩溃后可能被重复执行</td>
+          <td>工具调用先持久化为 <code>PENDING</code>，执行前转为 <code>IN_PROGRESS</code>，执行后记录结果。恢复时继续安全的 PENDING 步骤；旧 IN_PROGRESS 步骤标记为 <code>INDETERMINATE</code>，不自动重放。</td>
+          <td>本地检查点无法与任意外部系统事务化。将结果未知与失败区分，优先避免静默重复副作用；不宣称 exactly-once。</td>
+        </tr>
+        <tr>
+          <td>执行量和时长不受完整约束</td>
+          <td>加入模型调用上限、工具调用总上限、重试上限和任务 Deadline；模型 SDK 内部重试关闭，由 Runtime 统一计数。</td>
+          <td>把预算放在运行时配置中，使一次任务有明确资源边界，也便于在测试中使用短时限和小额度验证行为。</td>
+        </tr>
+        <tr>
+          <td>错误难以分类且可能泄露异常正文</td>
+          <td>定义模型和工具失败类别；日志及运行摘要记录分类，不保留原始供应商错误正文。</td>
+          <td>分类足以支持重试决策和故障定位，同时减少凭据、参数等敏感内容进入日志。</td>
+        </tr>
+        <tr>
+          <td>缺少执行过程的可观察性</td>
+          <td>为运行和步骤记录 ID、状态、时间、耗时、调用次数、恢复标记及可获取的 Token 用量；CLI 增加 <code>/runs</code> 和 <code>/resume &lt;runId&gt;</code>。</td>
+          <td>先用本地运行记录和结构化日志验证功能路径；当时范围未建设企业级指标、告警、仪表盘和分布式追踪。</td>
+        </tr>
+        <tr>
+          <td>缺少稳定回归依据</td>
+          <td>使用 Fake ModelClient、Fake/In-memory Store 和确定性工具覆盖普通回答、预算、失败、Deadline、取消、超时未知状态和恢复场景。</td>
+          <td>避免测试依赖真实模型、网络和密钥，让状态与恢复行为可重复验证。固定样例只验证已知行为，不代表模型质量。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="architecture">
+    <h2>阶段二整体架构图</h2>
+    <p><strong>时间点与范围：</strong>本图记录 2026-11-12 阶段二取消竞态修复并复验后的交付形态。它覆盖单 Agent Workflow：CLI 直接调用 Runtime，RunStore 为运行状态和检查点提供内存或本地 JSON 实现；不代表后续企业化升级后的 PostgreSQL/Worker 部署架构。</p>
+    <figure aria-labelledby="phase2-architecture-caption">
+      <svg viewBox="0 0 1000 690" role="img" aria-labelledby="phase2-svg-title phase2-svg-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="phase2-svg-title">阶段二单 Agent Workflow 分层架构</title>
+        <desc id="phase2-svg-desc">从上到下为 CLI 交互层、AgentRuntime 编排层、模型与工具适配层、工具能力层和 RunStore 持久化层。Runtime 同时读写运行检查点，调用模型或执行工具；运行配置、脱敏日志和预算约束横切各层。</desc>
+        <defs>
+          <marker id="p2-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#65758b"/></marker>
+          <style>
+            .band{fill:#f6f8fb;stroke:#d9e0e8;stroke-width:1.5}.box{stroke-width:1.5;rx:12}.label{font:700 16px sans-serif;fill:#344257}.title{font:700 17px sans-serif;fill:#17202b}.text{font:14px sans-serif;fill:#425168}.small{font:12px sans-serif;fill:#536273}.arrow{fill:none;stroke:#65758b;stroke-width:2;marker-end:url(#p2-arrow)}.dashed{stroke-dasharray:6 5}
+          </style>
+        </defs>
+        <rect class="band" x="18" y="18" width="964" height="108" rx="14"/><text class="label" x="38" y="47">交互层</text>
+        <rect class="box" x="255" y="39" width="490" height="64" fill="#fff4dc" stroke="#f0dfb7"/><text class="title" x="500" y="66" text-anchor="middle">Main / CLI</text><text class="text" x="500" y="89" text-anchor="middle">新建 Run · 查看 /runs · 恢复 /resume · 展示最终结果</text>
+
+        <path class="arrow" d="M500 104 V151"/><text class="small" x="516" y="136">用户输入 / Run 结果</text>
+        <rect class="band" x="18" y="154" width="964" height="132" rx="14"/><text class="label" x="38" y="183">工作流编排层</text>
+        <rect class="box" x="205" y="178" width="590" height="82" fill="#f2edff" stroke="#d9cdfd"/><text class="title" x="500" y="208" text-anchor="middle">AgentRuntime · 单 Agent 控制循环</text><text class="text" x="500" y="232" text-anchor="middle">Run 状态与恢复 · 消息历史 · 调用预算 / Deadline · 重试 · 取消 · 本地步骤记录</text>
+
+        <path class="arrow" d="M365 260 V325"/><text class="small" x="278" y="300">消息 + 工具定义 / 模型响应</text>
+        <path class="arrow" d="M635 260 V325"/><text class="small" x="647" y="300">工具调用 / 工具结果</text>
+        <rect class="band" x="18" y="329" width="964" height="126" rx="14"/><text class="label" x="38" y="357">适配与执行层</text>
+        <rect class="box" x="80" y="370" width="390" height="66" fill="#eaf5ff" stroke="#c6e4fb"/><text class="title" x="275" y="398" text-anchor="middle">ModelClient · DeepSeekModelClient</text><text class="text" x="275" y="420" text-anchor="middle">厂商 SDK 映射 · 超时与失败分类</text>
+        <rect class="box" x="530" y="370" width="390" height="66" fill="#eaf8f0" stroke="#c8ead5"/><text class="title" x="725" y="398" text-anchor="middle">ToolExecutor · ToolRegistry</text><text class="text" x="725" y="420" text-anchor="middle">名称查找 · JSON 参数校验 · 异常转结构化结果</text>
+
+        <path class="arrow" d="M275 437 V492"/><text class="small" x="291" y="472">模型请求 / 响应</text>
+        <path class="arrow" d="M725 437 V492"/><text class="small" x="741" y="472">本地调用</text>
+        <rect class="band" x="18" y="496" width="964" height="92" rx="14"/><text class="label" x="38" y="524">外部模型与工具层</text>
+        <rect class="box" x="80" y="535" width="390" height="42" fill="#fff" stroke="#c6e4fb"/><text class="text" x="275" y="562" text-anchor="middle">DeepSeek Flash · OpenAI 兼容 API</text>
+        <rect class="box" x="530" y="535" width="390" height="42" fill="#fff" stroke="#c8ead5"/><text class="text" x="725" y="562" text-anchor="middle">CalculatorTool · TimeTool · WeatherTool</text>
+
+        <rect x="18" y="610" width="964" height="58" rx="12" fill="#f0f4ff" stroke="#ccd8f4"/><text class="label" x="38" y="636">运行状态与横切约束</text><text class="text" x="250" y="636">RunStore → InMemoryRunStore / JsonFileRunStore · RunRecord 保存状态、消息与步骤检查点</text><text class="small" x="250" y="656">RuntimeConfig 预算与时限 · SLF4J 脱敏日志 · Jackson 消息 / Schema 处理</text>
+        <path class="arrow dashed" d="M860 260 C950 260 950 620 913 620"/>
+      </svg>
+      <figcaption id="phase2-architecture-caption">图：阶段二验收时的整体分层架构。实线表示主要调用路径；底部虚线表示 RunStore 为 Runtime 提供持久化状态边界。该阶段的 JSON 文件实现是单机方案，不具备多实例事务或高可用能力。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>取消问题的修复与复验</h2>
+    <p>初次验收发现两项取消风险：取消模型等待时没有中断活动模型任务；取消请求可能与成功终态提交竞争。</p>
+    <ul>
+      <li>增加运行期 <code>RunControl</code>，保存取消标记与活动模型 Future；取消时中断模型任务，任务启动和取消并发时也会检查取消标记。</li>
+      <li>取消请求与运行终态提交使用同一协调锁，由执行线程确认并持久化终态，避免取消状态被旧运行记录覆盖。</li>
+      <li>新增测试验证模型线程收到中断，以及模型返回与取消竞争时最终状态仍为 <code>CANCELLED</code>、不会提交最终回答。</li>
+    </ul>
+    <p>修复后重新执行干净构建，20 项测试全部通过。</p>
+  </section>
+
+  <section>
+    <h2>实际效果</h2>
+    <ul>
+      <li>CLI 可以查看本地运行摘要，并对磁盘中仍处于非终态的任务发起恢复。</li>
+      <li>每次执行可以通过 <code>runId</code> 回看运行状态变化、模型/工具步骤、耗时和失败类别。</li>
+      <li>进程恢复会继续尚未开始的工具调用；执行中断的工具不会被静默重放。</li>
+      <li>模型重试受总模型调用预算和任务 Deadline 限制；工具数量受独立上限约束。</li>
+      <li>新增恢复、持久化、预算、失败处理、超时、取消和评测样例；干净测试结果为 20/20 通过。</li>
+    </ul>
+    <p>这些是代码路径与自动化样例验证的结果，不代表已测量生产吞吐、真实模型成功率或线上成本。</p>
+  </section>
+
+  <section>
+    <h2>已知限制与下一步</h2>
+    <div class="caveat">
+      <ul>
+        <li>本地 JSON Store 仅适用于阶段二定义的单机、单实例范围；尚无多进程并发恢复同一 Run 的租约或锁，不满足多实例生产部署需求。</li>
+        <li>工具取消或超时不保证底层外部副作用撤销；真实副作用工具仍需工具端幂等、人工审批或事务协议。</li>
+        <li>模型请求在进程中断后可能重新发送，因此可能产生重复模型费用。</li>
+        <li>检查点包含消息历史、工具参数和工具结果；运行目录需要按敏感数据保护。</li>
+        <li>固定回归评测不验证真实模型是否正确选择工具，也不等同于完整质量、安全或生产可用性评估。</li>
+      </ul>
+    </div>
+    <p><strong>阶段二之后的工程缺口：</strong>RunStore 仍是内存/本地 JSON 单实例实现；没有数据库事务、跨进程协调、容灾恢复、数据保留策略和企业级监控；评测仍是 Fake ModelClient 固定样例，没有真实模型评测集。这些是当时阶段范围留下的客观限制，不意味着项目目标为学习用途。</p>
+  </section>
+
+  <footer>
+    <p>项目源码：<code>/Users/gecko/code/MyAi</code> · 阶段交付规则：项目根目录 <code>AGENTS.md</code></p>
+  </footer>
+</main>
+</body>
+</html>

@@ -2,6 +2,7 @@ package com.example.agent.tool;
 
 import com.example.agent.model.ToolCall;
 import com.example.agent.tools.CalculatorTool;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -47,5 +48,77 @@ class ToolExecutorTest {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new CalculatorTool());
         assertThrows(IllegalArgumentException.class, () -> registry.register(new CalculatorTool()));
+    }
+
+    @Test
+    void validatesNestedJsonSchemaConstraintsInsteadOfOnlyRootProperties() throws Exception {
+        AgentTool nestedTool = schemaTool("nested", """
+                {"type":"object","properties":{"settings":{"type":"object","properties":{
+                  "threshold":{"type":"integer","minimum":2}},"required":["threshold"]}},
+                  "required":["settings"]}
+                """);
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(nestedTool);
+
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(2))) {
+            ToolResult result = executor.execute(new ToolCall("nested-1", "nested",
+                    JSON.readTree("{\"settings\":{\"threshold\":1}}")));
+            assertFalse(result.success());
+            assertEquals(com.example.agent.workflow.FailureCategory.TOOL_ARGUMENTS, result.failureCategory());
+        }
+    }
+
+    @Test
+    void validatesJsonSchemaCompositionKeywords() throws Exception {
+        AgentTool choiceTool = schemaTool("choice", """
+                {"type":"object","properties":{"mode":{"oneOf":[
+                  {"const":"fast"},{"const":"safe"}]}},"required":["mode"]}
+                """);
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(choiceTool);
+
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(2))) {
+            ToolResult result = executor.execute(new ToolCall("choice-1", "choice",
+                    JSON.readTree("{\"mode\":\"unsafe\"}")));
+            assertFalse(result.success());
+            assertEquals(com.example.agent.workflow.FailureCategory.TOOL_ARGUMENTS, result.failureCategory());
+        }
+    }
+
+    @Test
+    void rejectsToolSchemasThatReferenceRemoteDocuments() throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(schemaTool("remote", """
+                {"$ref":"https://schemas.example.invalid/tool-input.json"}
+                """));
+
+        assertThrows(IllegalArgumentException.class, () -> new ToolExecutor(registry, Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void validatesLocalJsonSchemaReferences() throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(schemaTool("local-ref", """
+                {"$defs":{"threshold":{"type":"integer","minimum":2}},
+                 "type":"object","properties":{"level":{"$ref":"#/$defs/threshold"}},
+                 "required":["level"]}
+                """));
+
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(2))) {
+            ToolResult result = executor.execute(new ToolCall("local-ref-1", "local-ref",
+                    JSON.readTree("{\"level\":1}")));
+            assertFalse(result.success());
+            assertEquals(com.example.agent.workflow.FailureCategory.TOOL_ARGUMENTS, result.failureCategory());
+        }
+    }
+
+    private static AgentTool schemaTool(String name, String schemaJson) throws Exception {
+        JsonNode schema = JSON.readTree(schemaJson);
+        return new AgentTool() {
+            @Override public String name() { return name; }
+            @Override public String description() { return "test schema"; }
+            @Override public JsonNode inputSchema() { return schema; }
+            @Override public JsonNode execute(JsonNode arguments) { return arguments.deepCopy(); }
+        };
     }
 }

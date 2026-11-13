@@ -21,6 +21,11 @@ public record Message(Role role, String content, List<ToolCall> toolCalls,
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
     }
 
+    /** 创建系统指令消息。 */
+    public static Message system(String content) {
+        return new Message(Role.SYSTEM, content, List.of(), null, null);
+    }
+
     /** 创建普通用户消息。 */
     public static Message user(String content) {
         return new Message(Role.USER, content, List.of(), null, null);

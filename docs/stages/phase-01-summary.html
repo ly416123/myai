@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MyAi 阶段一 Java Agent Runtime 的分层架构补录">
+  <title>阶段一总结：最小版 Java Agent Runtime</title>
+  <style>
+    :root { color-scheme: light; --ink:#17202b; --muted:#536273; --line:#d9e0e8; --paper:#fff; --canvas:#f2f5f8; --accent:#176b5b; --soft:#e5f3ef; --warn:#80520b; --warnbg:#fff4dc; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--canvas); color:var(--ink); font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    main { width:min(960px,calc(100% - 32px)); margin:40px auto 72px; }
+    header,section,footer { background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:26px 30px; margin:18px 0; }
+    header { border-top:5px solid var(--accent); }
+    h1,h2 { line-height:1.3; } h1 { font-size:clamp(28px,5vw,40px); margin:8px 0 12px; } h2 { font-size:22px; margin:0 0 16px; }
+    p { margin:8px 0 14px; } .eyebrow { color:var(--accent); font-weight:700; letter-spacing:.04em; } .lead { color:var(--muted); font-size:18px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; } .pill { border-radius:999px; background:var(--soft); color:var(--accent); padding:4px 11px; font-size:14px; font-weight:650; }
+    .notice { border-left:4px solid #d59b25; background:var(--warnbg); padding:14px 18px; border-radius:8px; }
+    figure { margin:16px 0 8px; } figure svg { display:block; width:100%; height:auto; border:1px solid var(--line); border-radius:12px; background:#fbfcfe; }
+    figcaption,footer { color:var(--muted); font-size:14px; } ul { padding-left:24px; } li { margin:6px 0; } a { color:var(--accent); }
+    code { background:#f0f3f6; padding:2px 5px; border-radius:4px; overflow-wrap:anywhere; }
+    @media(max-width:640px) { main { width:min(100% - 20px,960px); margin-top:12px; } header,section,footer { padding:20px 18px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">MyAi · 阶段交付记录（历史架构补录）</div>
+    <h1>阶段一：最小版 Java Agent Runtime</h1>
+    <p class="lead">建立 CLI 驱动的单 Agent 模型—工具循环，保留模型适配、消息协议、运行时编排和本地工具的清晰边界。</p>
+    <div class="meta">
+      <span class="pill">Java 21</span><span class="pill">Maven</span><span class="pill">手写 AgentRuntime</span><span class="pill">DeepSeek Flash</span>
+    </div>
+  </header>
+
+  <section id="architecture">
+    <h2>阶段一整体分层架构</h2>
+    <p><strong>时间点与范围：</strong>本图回溯项目最初的基础 Agent 阶段。现存 Git 历史无法独立确认阶段一的准确完成日期和最终源码快照，因此图只表达可由最初需求及当前保留职责边界确认的形态，不把后续阶段能力倒填进来。本图不含 RunStore、检查点恢复、Supervisor–Worker、PostgreSQL 或 Kubernetes 部署。模型根据消息和工具定义选择工具，Runtime 不按用户输入关键词分流。</p>
+    <figure aria-labelledby="phase1-architecture-caption">
+      <svg viewBox="0 0 1000 680" role="img" aria-labelledby="phase1-svg-title phase1-svg-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="phase1-svg-title">阶段一最小版 Java Agent Runtime 分层架构</title>
+        <desc id="phase1-svg-desc">CLI 交互层将问题交给 AgentRuntime。Runtime 维护内存消息上下文，并通过 ModelClient 调用 DeepSeek。模型可返回普通回答，或请求由 ToolExecutor 通过 ToolRegistry 执行的本地工具；工具结果回填上下文后再次调用模型。环境变量、Jackson、日志和超时预算是横切配置。</desc>
+        <defs>
+          <marker id="p1-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#65758b"/></marker>
+          <style>
+            .band{fill:#f6f8fb;stroke:#d9e0e8;stroke-width:1.5}.box{stroke-width:1.5;rx:12}.label{font:700 16px sans-serif;fill:#344257}.title{font:700 17px sans-serif;fill:#17202b}.text{font:14px sans-serif;fill:#425168}.small{font:12px sans-serif;fill:#536273}.arrow{fill:none;stroke:#65758b;stroke-width:2;marker-end:url(#p1-arrow)}.dashed{stroke-dasharray:6 5}
+          </style>
+        </defs>
+        <rect class="band" x="18" y="18" width="964" height="96" rx="14"/><text class="label" x="38" y="47">交互层</text>
+        <rect class="box" x="260" y="38" width="480" height="58" fill="#fff4dc" stroke="#f0dfb7"/><text class="title" x="500" y="63" text-anchor="middle">Main · 命令行入口</text><text class="text" x="500" y="84" text-anchor="middle">读取用户问题 · 打印执行日志和最终回答</text>
+
+        <path class="arrow" d="M500 97 V143"/><text class="small" x="516" y="127">用户输入 / 回答</text>
+        <rect class="band" x="18" y="147" width="964" height="118" rx="14"/><text class="label" x="38" y="176">Agent 编排层</text>
+        <rect class="box" x="194" y="172" width="612" height="72" fill="#f2edff" stroke="#d9cdfd"/><text class="title" x="500" y="200" text-anchor="middle">AgentRuntime · 手写模型 / 工具控制循环</text><text class="text" x="500" y="224" text-anchor="middle">消息上下文 · 工具调用判断 · 多工具执行 · 结果回填 · 最大模型调用次数</text>
+
+        <path class="arrow" d="M360 244 V309"/><text class="small" x="266" y="283">消息 + 工具定义 / 模型响应</text>
+        <path class="arrow" d="M640 244 V309"/><text class="small" x="653" y="283">工具请求 / 执行结果</text>
+        <rect class="band" x="18" y="313" width="964" height="128" rx="14"/><text class="label" x="38" y="342">适配与执行层</text>
+        <rect class="box" x="80" y="355" width="390" height="68" fill="#eaf5ff" stroke="#c6e4fb"/><text class="title" x="275" y="383" text-anchor="middle">ModelClient · DeepSeekModelClient</text><text class="text" x="275" y="407" text-anchor="middle">厂商 SDK 协议映射 · 文本与工具调用解析</text>
+        <rect class="box" x="530" y="355" width="390" height="68" fill="#eaf8f0" stroke="#c8ead5"/><text class="title" x="725" y="383" text-anchor="middle">ToolExecutor · ToolRegistry</text><text class="text" x="725" y="407" text-anchor="middle">按名称查找 · 参数校验 · 调用 Java 工具 · 结构化结果</text>
+
+        <path class="arrow" d="M275 424 V483"/><text class="small" x="291" y="461">模型 API 请求 / 响应</text>
+        <path class="arrow" d="M725 424 V483"/><text class="small" x="741" y="461">本地方法调用</text>
+        <rect class="band" x="18" y="487" width="964" height="100" rx="14"/><text class="label" x="38" y="516">模型服务与工具能力层</text>
+        <rect class="box" x="80" y="528" width="390" height="46" fill="#fff" stroke="#c6e4fb"/><text class="text" x="275" y="557" text-anchor="middle">DeepSeek Flash · OpenAI 兼容 API</text>
+        <rect class="box" x="530" y="528" width="390" height="46" fill="#fff" stroke="#c8ead5"/><text class="text" x="725" y="557" text-anchor="middle">CalculatorTool · TimeTool · WeatherTool</text>
+
+        <rect x="18" y="608" width="964" height="56" rx="12" fill="#f0f4ff" stroke="#ccd8f4"/><text class="label" x="38" y="635">消息契约与横切配置</text><text class="text" x="250" y="635">Message / ModelResponse / ToolCall / ToolDefinition / ToolResult · MessageContext（内存）</text><text class="small" x="250" y="654">环境变量读取模型密钥 · Jackson JSON · SLF4J 日志 · 模型 / 工具超时与调用轮数限制</text>
+        <path class="arrow dashed" d="M860 244 C950 244 950 616 913 616"/>
+      </svg>
+      <figcaption id="phase1-architecture-caption">图：阶段一基础 Agent 的分层架构。箭头表示 Runtime 与模型适配器、工具执行器之间的调用边界；用户请求和模型响应通过统一消息数据结构传递。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>职责边界</h2>
+    <ul>
+      <li><strong>Main / CLI：</strong>接收用户输入、组装或调用应用对象，并展示执行过程。</li>
+      <li><strong>AgentRuntime：</strong>拥有 Agent 决策控制循环；处理普通回答、一个或多个工具调用、工具结果回填和模型调用上限。</li>
+      <li><strong>ModelClient：</strong>隔离 DeepSeek/OpenAI 兼容 SDK，输入统一消息和工具定义，输出统一的文本或工具调用响应。</li>
+      <li><strong>AgentTool / ToolRegistry / ToolExecutor：</strong>描述可用能力、按名称查找工具、校验 JSON 参数并调用本地 Java 方法。</li>
+      <li><strong>MessageContext：</strong>在一次任务期间维护消息历史；阶段一不提供跨任务持久化。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>本阶段边界与证据说明</h2>
+    <p>该阶段的目标来自项目最初需求：使用 Java 21 与 Maven 自行实现最小 LLM + Tool Calling Agent，不引入 Agent 框架；保留 ModelClient、工具契约和 Runtime 控制循环边界。阶段二随后扩展了 Run 状态、Checkpoint、预算与恢复。</p>
+    <p class="notice"><strong>历史记录说明：</strong>仓库最早可查的 Git 提交已包含阶段一与阶段二的部分实现，无法从当前 Git 历史中独立还原阶段一最终源码快照、专属验收命令或测试数量。因此本页补录阶段一的目标架构与职责边界，不虚构阶段一测试数字，也不把当前代码状态倒填成当时验收证据。详细的阶段二验收记录见 <a href="phase-02-summary.html">阶段二总结</a>。</p>
+  </section>
+
+  <footer>项目：Java 21 + Maven · 后续阶段交付约束：项目根目录 <code>AGENTS.md</code></footer>
+</main>
+</body>
+</html>

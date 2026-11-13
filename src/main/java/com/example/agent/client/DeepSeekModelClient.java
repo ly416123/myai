@@ -66,16 +66,35 @@ public final class DeepSeekModelClient implements ModelClient {
      * @param timeout 单次模型请求超时时间
      */
     public DeepSeekModelClient(String apiKey, String model, Duration timeout) {
+        this(apiKey, model, timeout, "https://api.deepseek.com");
+    }
+
+    /** Creates a client for the configured DeepSeek-compatible provider endpoint. */
+    public DeepSeekModelClient(String apiKey, String model, Duration timeout, String baseUrl) {
         if (apiKey == null || apiKey.isBlank()) throw new IllegalArgumentException("DeepSeek API key is required");
         if (model == null || model.isBlank()) throw new IllegalArgumentException("DeepSeek model is required");
+        if (baseUrl == null || !isValidBaseUrl(baseUrl)) {
+            throw new IllegalArgumentException("A valid provider endpoint is required");
+        }
         this.model = model;
         this.client = OpenAIOkHttpClient.builder()
                 .apiKey(apiKey)
-                .baseUrl("https://api.deepseek.com")
+                .baseUrl(baseUrl)
                 .timeout(timeout)
                 // 禁用 SDK 内部重试，确保每次模型请求和重试都由 Runtime 计数并受预算约束。
                 .maxRetries(0)
                 .build();
+    }
+
+    private static boolean isValidBaseUrl(String baseUrl) {
+        try {
+            java.net.URI uri = java.net.URI.create(baseUrl);
+            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    && uri.getHost() != null && uri.getUserInfo() == null
+                    && uri.getQuery() == null && uri.getFragment() == null;
+        } catch (IllegalArgumentException invalidUri) {
+            return false;
+        }
     }
 
     @Override
@@ -113,10 +132,15 @@ public final class DeepSeekModelClient implements ModelClient {
 
     /** 只检查异常类型和安全的状态码类别，不把供应商错误正文或凭据写进日志/运行记录。 */
     private static ModelClientException classify(RuntimeException failure) {
+        // SDK 可能先以 OpenAIIoException 包装读取超时；先扫描完整 cause 链，避免把超时降级成网络错误。
         for (Throwable current = failure; current != null; current = current.getCause()) {
-            if (current instanceof SocketTimeoutException) {
+            if (current instanceof java.io.InterruptedIOException
+                    || current instanceof SocketTimeoutException
+                    || current instanceof java.net.http.HttpTimeoutException) {
                 return new ModelClientException(FailureCategory.MODEL_TIMEOUT, true);
             }
+        }
+        for (Throwable current = failure; current != null; current = current.getCause()) {
             if (current instanceof RateLimitException) {
                 return new ModelClientException(FailureCategory.MODEL_RATE_LIMIT, true);
             }
@@ -135,8 +159,9 @@ public final class DeepSeekModelClient implements ModelClient {
             if (current instanceof OpenAIServiceException serviceFailure) {
                 int status = serviceFailure.statusCode();
                 if (status == 408 || status == 409 || status == 429 || status >= 500) {
-                    return new ModelClientException(status == 429 ? FailureCategory.MODEL_RATE_LIMIT
-                            : FailureCategory.MODEL_SERVER, true);
+                    FailureCategory category = status == 408 ? FailureCategory.MODEL_TIMEOUT
+                            : status == 429 ? FailureCategory.MODEL_RATE_LIMIT : FailureCategory.MODEL_SERVER;
+                    return new ModelClientException(category, true);
                 }
                 if (status == 401 || status == 403) {
                     return new ModelClientException(FailureCategory.MODEL_AUTHENTICATION, false);

@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run unit and PostgreSQL integration tests
+        run: mvn --batch-mode --no-transfer-progress clean verify
+      - name: Scan Git history for leaked credentials
+        run: >-
+          docker run --rm -v "${GITHUB_WORKSPACE}:/repo:ro"
+          ghcr.io/gitleaks/gitleaks:v8.30.1
+          git --redact --no-banner /repo
+      - name: Check database backup and restore safeguards
+        run: |
+          bash -n ops/run-scheduled-backup.sh ops/postgres-backup.sh ops/postgres-restore.sh ops/prune-postgres-backups.sh ops/tests/postgres-backup-retention-test.sh ops/tests/postgres-backup-restore-test.sh ops/tests/postgres-backup-restore-smoke.sh
+          bash ops/tests/postgres-backup-retention-test.sh
+          bash ops/tests/postgres-backup-restore-test.sh
+      - name: Build checksum-pinned age tools
+        run: bash ops/fetch-age.sh
+      - name: Build scheduled backup image
+        run: docker build --file ops/backup.Dockerfile --tag myai-postgres-backup:${{ github.sha }} .
+      - name: Run encrypted PostgreSQL backup and restore smoke test
+        env:
+          MYAI_BACKUP_IMAGE: myai-postgres-backup:${{ github.sha }}
+        run: PATH="${GITHUB_WORKSPACE}/ops/.build:${PATH}" bash ops/tests/postgres-backup-restore-smoke.sh
+      - name: Build runtime image
+        run: docker build --tag myai-agent:${{ github.sha }} .
+      - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: myai-agent:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan backup image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: myai-postgres-backup:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan repository configuration
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  publish-images:
+    if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Package runtime
+        run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - name: Build checksum-pinned age tools
+        run: bash ops/fetch-age.sh
+      - name: Prepare image names
+        id: images
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "runtime=ghcr.io/${owner}/myai-agent" >> "$GITHUB_OUTPUT"
+          echo "backup=ghcr.io/${owner}/myai-postgres-backup" >> "$GITHUB_OUTPUT"
+      - name: Build runtime image
+        run: >-
+          docker build
+          --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+          --tag "${{ steps.images.outputs.runtime }}:${GITHUB_SHA}" .
+      - name: Build scheduled backup image
+        run: >-
+          docker build --file ops/backup.Dockerfile
+          --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+          --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+          --tag "${{ steps.images.outputs.backup }}:${GITHUB_SHA}" .
+      - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.images.outputs.runtime }}:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan backup image for HIGH and CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.images.outputs.backup }}:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Authenticate to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish scanned images
+        env:
+          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
+          BACKUP_IMAGE: ${{ steps.images.outputs.backup }}
+        run: |
+          docker push "$RUNTIME_IMAGE:$GITHUB_SHA"
+          docker push "$BACKUP_IMAGE:$GITHUB_SHA"

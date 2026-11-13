@@ -47,4 +47,15 @@ public final class ToolRegistry {
     public synchronized Collection<AgentTool> all() {
         return List.copyOf(tools.values());
     }
+
+    /** 创建仅含 allowlist 工具的不可变用途注册表，供不同 Worker 隔离工具可见范围。 */
+    public synchronized ToolRegistry restrictedTo(Collection<String> allowedNames) {
+        ToolRegistry restricted = new ToolRegistry();
+        for (String name : allowedNames) {
+            AgentTool tool = tools.get(name);
+            if (tool == null) throw new IllegalArgumentException("Worker references an unregistered tool");
+            restricted.register(tool);
+        }
+        return restricted;
+    }
 }

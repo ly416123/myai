@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: myai
+resources:
+  - ../../k8s
+images:
+  - name: registry.example.invalid/myai
+    newName: docker.io/library/myai-agent
+    newTag: l5-20261113-runfailure-metric
+  - name: registry.example.invalid/myai-postgres-backup
+    newName: docker.io/library/myai-postgres-backup
+    newTag: l5-20261113
+replicas:
+  - name: myai-agent-worker
+    count: 2
+patches:
+  - target:
+      kind: Deployment
+      name: myai-agent-worker
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/imagePullSecrets
+  - target:
+      kind: Deployment
+      name: myai-agent-worker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: myai-agent-worker
+      spec:
+        template:
+          spec:
+            containers:
+              - name: agent-worker
+                env:
+                  - name: AGENT_WORKER_CONCURRENCY
+                    value: "1"

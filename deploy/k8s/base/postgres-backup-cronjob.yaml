@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: myai-postgres-backup
+  labels:
+    app.kubernetes.io/name: myai-agent
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 2 * * *"
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: myai-agent
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: postgres-backup
+              image: docker.io/library/myai-postgres-backup:l5-20261113
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PGHOST
+                  value: myai-postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: myai
+                - name: PGUSER
+                  valueFrom:
+                    configMapKeyRef:
+                      name: myai-runtime
+                      key: database-username
+                - name: AGENT_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: myai-database
+                      key: database-password
+                - name: AGE_RECIPIENT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: myai-backup-config
+                      key: age-recipient
+                - name: AGENT_BACKUP_DIR
+                  value: /backups
+                - name: AGENT_BACKUP_RETENTION_DAYS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: myai-backup-config
+                      key: retention-days
+                - name: PGSSLMODE
+                  value: verify-full
+                - name: PGSSLROOTCERT
+                  value: /var/run/secrets/database-ca/ca.crt
+              volumeMounts:
+                - name: database-ca
+                  mountPath: /var/run/secrets/database-ca
+                  readOnly: true
+                - name: backup-storage
+                  mountPath: /backups
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: database-ca
+              secret:
+                secretName: myai-postgres-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+                defaultMode: 0444
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: myai-postgres-backups
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

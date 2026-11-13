@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base/agent-worker-deployment.yaml
+  - base/l5-foundation.yaml
+  - base/prometheus-console.yaml
+  - base/l5-postgres.yaml
+  - base/postgres-backup-cronjob.yaml

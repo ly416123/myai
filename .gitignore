@@ -35,9 +35,28 @@ bin/
 
 # Local environment secrets
 .env
+/.env.*
+!/.env.example
 
 # Local API credentials
 /deepseek.key
+*.key
+*.pem
+*.crt
+*.csr
+*.srl
 
 # Local workflow checkpoints may contain conversation/tool context
 /.agent-runs/
+
+# Evaluation reports contain model outputs and are local runtime data
+/var/agent-evaluations/
+
+# Database backups contain sensitive Run payloads even when encrypted
+/backups/
+/ops/backups/
+/ops/.build/
+**/__pycache__/
+*.py[cod]
+*.dump.age
+*.dump.age.sha256

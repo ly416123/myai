@@ -18,7 +18,18 @@ public record RunStep(
         String toolName,
         FailureCategory failureCategory,
         Long promptTokens,
-        Long completionTokens) {
+        Long completionTokens,
+        String taskId,
+        String workerId,
+        String phase) {
+
+    /** Backward-compatible constructor for existing code and older JSON checkpoints. */
+    public RunStep(String stepId, StepKind kind, RunStepStatus status, Instant startedAt,
+                   Instant completedAt, long durationMillis, String toolCallId, String toolName,
+                   FailureCategory failureCategory, Long promptTokens, Long completionTokens) {
+        this(stepId, kind, status, startedAt, completedAt, durationMillis, toolCallId, toolName,
+                failureCategory, promptTokens, completionTokens, null, null, null);
+    }
 
     public static RunStep modelStarted(String stepId, Instant now) {
         return new RunStep(stepId, StepKind.MODEL, RunStepStatus.IN_PROGRESS, now, null, 0,
@@ -32,13 +43,30 @@ public record RunStep(
 
     public RunStep start(Instant now) {
         return new RunStep(stepId, kind, RunStepStatus.IN_PROGRESS, now, null, 0,
-                toolCallId, toolName, null, null, null);
+                toolCallId, toolName, null, null, null, taskId, workerId, phase);
     }
 
     public RunStep finish(RunStepStatus finalStatus, Instant now, FailureCategory category,
                           Long promptTokenCount, Long completionTokenCount) {
         long elapsed = Math.max(0, Duration.between(startedAt, now).toMillis());
         return new RunStep(stepId, kind, finalStatus, startedAt, now, elapsed,
-                toolCallId, toolName, category, promptTokenCount, completionTokenCount);
+                toolCallId, toolName, category, promptTokenCount, completionTokenCount, taskId, workerId, phase);
+    }
+
+    public static RunStep workflow(String stepId, StepKind kind, String taskId, String workerId,
+                                   String phase, Instant now) {
+        return new RunStep(stepId, kind, RunStepStatus.IN_PROGRESS, now, null, 0,
+                null, null, null, null, null, taskId, workerId, phase);
+    }
+
+    public static RunStep modelStarted(String stepId, Instant now, String taskId, String workerId) {
+        return new RunStep(stepId, StepKind.MODEL, RunStepStatus.IN_PROGRESS, now, null, 0,
+                null, null, null, null, null, taskId, workerId, "MODEL");
+    }
+
+    public static RunStep toolPending(String stepId, String callId, String toolName, Instant now,
+                                      String taskId, String workerId) {
+        return new RunStep(stepId, StepKind.TOOL, RunStepStatus.PENDING, now, null, 0,
+                callId, toolName, null, null, null, taskId, workerId, "TOOL");
     }
 }

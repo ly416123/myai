@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myai-agent-worker
+  labels:
+    app.kubernetes.io/name: myai-agent
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: myai-agent
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myai-agent
+        app.kubernetes.io/component: worker
+    spec:
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: myai-registry
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent-worker
+          image: registry.example.invalid/myai:REPLACE_WITH_VERSION
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENT_EXECUTION_MODE
+              value: worker
+            - name: AGENT_CLI_ENABLED
+              value: "false"
+            - name: AGENT_WORKER_CONCURRENCY
+              value: "2"
+            - name: AGENT_WORKER_POLL_INTERVAL
+              value: 1s
+            - name: AGENT_DB_POOL_SIZE
+              value: "5"
+            - name: AGENT_OTLP_TRACES_ENABLED
+              value: "true"
+            - name: AGENT_OTLP_METRICS_ENABLED
+              value: "true"
+            - name: AGENT_OTLP_TRACES_ENDPOINT
+              value: http://myai-otel-collector:4318/v1/traces
+            - name: AGENT_OTLP_METRICS_ENDPOINT
+              value: http://myai-otel-collector:4318/v1/metrics
+            - name: AGENT_SEPARATE_TASK_WORKERS
+              value: "true"
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:MaxRAMPercentage=70
+            - name: DEEPSEEK_KEY_FILE
+              value: /var/run/secrets/myai/deepseek-api-key
+            - name: DEEPSEEK_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: model-base-url
+            - name: AGENT_DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: database-url
+            - name: AGENT_DB_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: database-username
+            - name: AGENT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: myai-database
+                  key: database-password
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+          # Readiness is intentionally an exec probe: this service does not expose an HTTP API.
+          # A stale heartbeat means the worker cannot complete its DB-backed queue poll.
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'test -r /tmp/myai-worker-health && test $(( $(date +%s) - $(cat /tmp/myai-worker-health) )) -lt 15'
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+            successThreshold: 1
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'test -r /tmp/myai-worker-live && test $(( $(date +%s) - $(cat /tmp/myai-worker-live) )) -lt 15'
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          # Liveness tracks the polling loop itself, independent of database availability.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'test -r /tmp/myai-worker-live && test $(( $(date +%s) - $(cat /tmp/myai-worker-live) )) -lt 15'
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: database-ca
+              mountPath: /var/run/secrets/database-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: provider-key
+              mountPath: /var/run/secrets/myai
+              readOnly: true
+      volumes:
+        - name: database-ca
+          secret:
+            secretName: myai-postgres-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: provider-key
+          secret:
+            secretName: myai-provider
+            defaultMode: 0440

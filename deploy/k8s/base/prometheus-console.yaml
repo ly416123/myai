@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myai-agent-overview
+  namespace: myai
+data:
+  agent-overview.html: |
+    <!doctype html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>MyAI Agent Runtime</title>
+      <style>
+        body { font: 16px system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #182230; }
+        h1 { color: #14532d; }
+        table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
+        th, td { border: 1px solid #d0d5dd; padding: .65rem; text-align: left; }
+        th { background: #f2f4f7; }
+        code { overflow-wrap: anywhere; }
+        .muted { color: #667085; }
+      </style>
+    </head>
+    <body>
+      <h1>MyAI Agent Runtime</h1>
+      <p class="muted">由 Prometheus 控制台模板生成。页面每次打开时查询最近采集到的指标。</p>
+      <h2>Worker 队列</h2>
+      <table>
+        <tr><th>指标</th><th>当前值</th></tr>
+        <tr><td>排队运行数</td><td>{{ with query "max(myai_agent_worker_queue_depth_runs)" }}{{ with first . }}{{ value . }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+        <tr><td>最老等待秒数</td><td>{{ with query "max(myai_agent_worker_queue_oldest_seconds)" }}{{ with first . }}{{ value . | humanize }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+        <tr><td>过期租约数</td><td>{{ with query "max(myai_agent_worker_lease_expired_leases)" }}{{ with first . }}{{ value . }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+        <tr><td>过去 5 分钟失败 Run 数</td><td>{{ with query "max(myai_agent_worker_run_failed_recent_runs)" }}{{ with first . }}{{ value . }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+      </table>
+      <h2>数据库连接池</h2>
+      <table>
+        <tr><th>指标</th><th>当前值</th></tr>
+        <tr><td>活动连接数</td><td>{{ with query "sum(myai_hikaricp_connections_active)" }}{{ with first . }}{{ value . }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+        <tr><td>连接上限</td><td>{{ with query "sum(myai_hikaricp_connections_max)" }}{{ with first . }}{{ value . }}{{ else }}暂无数据{{ end }}{{ end }}</td></tr>
+      </table>
+      <p class="muted">Prometheus API：<a href="/api/v1/targets">采集目标</a> · <a href="/api/v1/rules">告警规则</a></p>
+    </body>
+    </html>

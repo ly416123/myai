@@ -13,8 +13,15 @@ import com.example.agent.workflow.RunStatus;
 import com.example.agent.workflow.RunStep;
 import com.example.agent.workflow.RunStepStatus;
 import com.example.agent.workflow.RunStore;
+import com.example.agent.workflow.RunStoreUnavailableException;
+import com.example.agent.workflow.LeaseToken;
+import com.example.agent.workflow.LeaseLostException;
+import com.example.agent.workflow.RunLeaseHeartbeat;
+import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.RuntimeConfig;
 import com.example.agent.workflow.StepKind;
+import com.example.agent.observability.AgentTelemetry;
+import io.micrometer.observation.Observation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,7 +41,7 @@ import java.util.concurrent.TimeoutException;
  * 模型调用可以在恢复时重试（可能重复产生模型费用）；工具调用只有在 PENDING 状态才会执行，
  * 已持久化为 IN_PROGRESS 的调用恢复为 INDETERMINATE，避免自动重放可能产生副作用的操作。
  */
-public final class AgentRuntime {
+public final class AgentRuntime implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(AgentRuntime.class);
     private static final long MODEL_WAIT_SLICE_MILLIS = 100;
 
@@ -43,7 +50,10 @@ public final class AgentRuntime {
     private final ToolExecutor toolExecutor;
     private final RunStore runStore;
     private final RuntimeConfig config;
+    private final AgentTelemetry telemetry;
+    private final RunLeasePolicy leasePolicy;
     private final ConcurrentHashMap<String, RunControl> runControls = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LeaseToken> runLeases = new ConcurrentHashMap<>();
 
     /** 保留基础版构造方式，使用内存存储和默认阶段二预算。 */
     public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor, int maxModelCalls) {
@@ -53,11 +63,24 @@ public final class AgentRuntime {
 
     public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
                         RunStore runStore, RuntimeConfig config) {
+        this(modelClient, registry, toolExecutor, runStore, config, AgentTelemetry.noop(), RunLeasePolicy.DEFAULT);
+    }
+
+    public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
+                        RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry) {
+        this(modelClient, registry, toolExecutor, runStore, config, telemetry, RunLeasePolicy.DEFAULT);
+    }
+
+    public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
+                        RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry,
+                        RunLeasePolicy leasePolicy) {
         this.modelClient = java.util.Objects.requireNonNull(modelClient);
         this.registry = java.util.Objects.requireNonNull(registry);
         this.toolExecutor = java.util.Objects.requireNonNull(toolExecutor);
         this.runStore = java.util.Objects.requireNonNull(runStore);
         this.config = java.util.Objects.requireNonNull(config);
+        this.telemetry = java.util.Objects.requireNonNull(telemetry);
+        this.leasePolicy = java.util.Objects.requireNonNull(leasePolicy);
     }
 
     /**
@@ -100,13 +123,15 @@ public final class AgentRuntime {
             synchronized (control) {
                 if (control.active) throw new IllegalStateException("Run is already active");
                 run = runStore.find(runId).orElseThrow(() -> new IllegalArgumentException("Run not found"));
+                if (run.runType() != com.example.agent.workflow.RunType.SINGLE_AGENT) {
+                    throw new IllegalStateException("Run belongs to a different workflow type");
+                }
                 if (run.status() != RunStatus.RUNNING && run.status() != RunStatus.CREATED) {
                     throw new IllegalStateException("Only a non-terminal run can be resumed");
                 }
                 control.active = true;
                 run.setResumed(true);
                 run.touch(Instant.now());
-                runStore.save(run);
             }
             return execute(run, true);
         } finally {
@@ -118,20 +143,57 @@ public final class AgentRuntime {
     /** 请求取消运行；由执行线程确认终态，正在进行的工具不会被视为已撤销。 */
     public void cancelRun(String runId) {
         RunControl control = runControls.computeIfAbsent(runId, ignored -> new RunControl());
-        synchronized (control) {
-            RunRecord current = runStore.find(runId)
-                    .orElseThrow(() -> new IllegalArgumentException("Run not found"));
-            ensureNonTerminal(current);
-            if (control.active) {
-                control.requestCancellation();
-            } else {
-                // 没有活跃执行线程时（例如恢复前），直接将检查点终止为已取消。
-                current.transitionTo(RunStatus.CANCELLED, Instant.now(), FailureCategory.CANCELLED);
-                runStore.save(current);
-                runControls.remove(runId, control);
+        try {
+            synchronized (control) {
+                RunRecord current = runStore.find(runId)
+                        .orElseThrow(() -> new IllegalArgumentException("Run not found"));
+                ensureNonTerminal(current);
+                if (!runStore.requestCancellation(runId, Instant.now())) {
+                    throw new IllegalStateException("Run is already terminal");
+                }
+                if (control.active) {
+                    control.requestCancellation();
+                } else {
+                    // 无本地执行线程时尝试认领并完成终态；若其他实例持有租约，由其观察请求并收尾。
+                    Instant now = Instant.now();
+                    runStore.claim(runId, UUID.randomUUID().toString(), now, Duration.ofSeconds(30)).ifPresent(lease -> {
+                        RunRecord latest = runStore.find(runId).orElseThrow();
+                        latest.transitionTo(RunStatus.CANCELLED, now, FailureCategory.CANCELLED);
+                        if (!runStore.saveFenced(latest, lease, now)) throw new LeaseLostException(runId);
+                    });
+                }
+            }
+        } finally {
+            synchronized (control) {
+                if (!control.active) runControls.remove(runId, control);
             }
         }
         log.info("runId={} cancellation=requested", runId);
+    }
+
+    /** Requests cancellation for active runs during process shutdown and waits briefly for checkpoint settlement. */
+    @Override
+    public void close() {
+        for (String runId : List.copyOf(runControls.keySet())) {
+            try {
+                cancelRun(runId);
+            } catch (RuntimeException rejected) {
+                log.warn("runId={} shutdownCancellation=notAccepted", runId);
+            }
+        }
+        awaitShutdownSettlement(runControls);
+    }
+
+    private static void awaitShutdownSettlement(ConcurrentHashMap<String, ?> activeRuns) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!activeRuns.isEmpty() && System.nanoTime() < until) {
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     private static void ensureNonTerminal(RunRecord run) {
@@ -141,6 +203,15 @@ public final class AgentRuntime {
     }
 
     private RunRecord execute(RunRecord run, boolean recovering) {
+        LeaseToken lease = runStore.claim(run.runId(), UUID.randomUUID().toString(), Instant.now(),
+                leasePolicy.duration())
+                .orElseThrow(() -> new IllegalStateException("Run is already leased or terminal"));
+        runLeases.put(run.runId(), lease);
+        RunControl runControl = runControls.get(run.runId());
+        RunLeaseHeartbeat heartbeat = new RunLeaseHeartbeat(runStore, lease, leasePolicy, runControl::loseLease);
+        run.setLeaseOwner(lease.ownerId());
+        run.setFencingToken(lease.fencingToken());
+        Observation runObservation = telemetry.startRun(run, "single");
         try {
             if (run.status() == RunStatus.CREATED) run.transitionTo(RunStatus.RUNNING, Instant.now(), null);
             else run.touch(Instant.now());
@@ -208,6 +279,10 @@ public final class AgentRuntime {
                         run.resumed(), run.tokenUsageKnown());
                 return run;
             }
+        } catch (LeaseLostException lost) {
+            log.warn("runId={} execution=lease_lost fencingToken={}", run.runId(), lease.fencingToken());
+            run = runStore.find(run.runId()).orElse(run);
+            return run;
         } catch (WorkflowAbort abort) {
             RunStatus terminalStatus;
             FailureCategory terminalCategory;
@@ -238,6 +313,10 @@ public final class AgentRuntime {
             log.error("runId={} status={} failureCategory={} exceptionType={}", run.runId(), run.status(),
                     terminalCategory, unexpected.getClass().getSimpleName());
             return run;
+        } finally {
+            heartbeat.close();
+            telemetry.finishRun(runObservation, run, "single");
+            runLeases.remove(run.runId(), lease);
         }
     }
 
@@ -253,14 +332,19 @@ public final class AgentRuntime {
             run.addStep(RunStep.modelStarted(stepId, startedAt));
             run.incrementModelCalls();
             persist(run);
+            Observation stepObservation = telemetry.startStep(run, run.step(stepId), "single");
             try {
-                ModelResponse response = callModelUntilDeadline(run);
+                ModelResponse response;
+                try (var scope = stepObservation.openScope()) {
+                    response = callModelUntilDeadline(run);
+                }
                 checkCancelled(run);
                 Instant completedAt = Instant.now();
                 run.replaceStep(stepId, run.step(stepId).finish(RunStepStatus.SUCCEEDED, completedAt,
                         null, response.promptTokens(), response.completionTokens()));
                 run.addTokenUsage(response.promptTokens(), response.completionTokens());
                 persist(run);
+                telemetry.finishStep(stepObservation, run.step(stepId), "single");
                 log.info("runId={} stepId={} kind=MODEL status=SUCCEEDED durationMs={} modelCall={} tokensKnown={}",
                         run.runId(), stepId, Duration.between(startedAt, completedAt).toMillis(),
                         run.modelCalls(), response.promptTokens() != null && response.completionTokens() != null);
@@ -271,6 +355,7 @@ public final class AgentRuntime {
                         failure.category(), null, null));
                 run.markTokenUsageUnknown();
                 persist(run);
+                telemetry.finishStep(stepObservation, run.step(stepId), "single");
                 log.warn("runId={} stepId={} kind=MODEL status=FAILED failureCategory={} retryable={} durationMs={}",
                         run.runId(), stepId, failure.category(), failure.retryable(),
                         Duration.between(startedAt, completedAt).toMillis());
@@ -287,6 +372,7 @@ public final class AgentRuntime {
                         abort.category, null, null));
                 run.markTokenUsageUnknown();
                 persist(run);
+                telemetry.finishStep(stepObservation, run.step(stepId), "single");
                 throw abort;
             }
         }
@@ -315,6 +401,7 @@ public final class AgentRuntime {
                     Thread.currentThread().interrupt();
                     throw new WorkflowAbort(FailureCategory.CANCELLED);
                 } catch (CancellationException cancelled) {
+                    if (control.leaseLost()) throw new LeaseLostException(run.runId());
                     throw new WorkflowAbort(FailureCategory.CANCELLED);
                 } catch (ExecutionException failed) {
                     Throwable cause = failed.getCause();
@@ -358,7 +445,15 @@ public final class AgentRuntime {
             run.incrementToolCalls();
             persist(run); // IN_PROGRESS 必须在调用 Java 工具之前持久化。
             Duration remaining = Duration.between(Instant.now(), run.deadlineAt());
-            var result = toolExecutor.execute(call, run.runId(), step.stepId(), remaining);
+            Observation stepObservation = telemetry.startStep(run, run.step(step.stepId()), "single");
+            com.example.agent.tool.ToolResult result;
+            try (var scope = stepObservation.openScope()) {
+                result = toolExecutor.execute(call, run.runId(), step.stepId(), remaining);
+            } catch (RuntimeException failure) {
+                stepObservation.error(failure);
+                stepObservation.stop();
+                throw failure;
+            }
             Instant completedAt = Instant.now();
             RunStepStatus status = result.outcomeUnknown() ? RunStepStatus.INDETERMINATE
                     : result.success() ? RunStepStatus.SUCCEEDED : RunStepStatus.FAILED;
@@ -366,6 +461,7 @@ public final class AgentRuntime {
                     result.failureCategory(), null, null));
             run.addMessage(Message.toolResult(result.toolCallId(), result.toolName(), result.asMessageContent()));
             persist(run);
+            telemetry.finishStep(stepObservation, run.step(step.stepId()), "single");
             log.info("runId={} stepId={} kind=TOOL tool={} status={} failureCategory={} durationMs={} toolCall={}",
                     run.runId(), step.stepId(), step.toolName(), status, result.failureCategory(),
                     Duration.between(startedAt, completedAt).toMillis(), run.toolCalls());
@@ -420,12 +516,29 @@ public final class AgentRuntime {
 
     private void checkCancelled(RunRecord run) throws WorkflowAbort {
         RunControl control = runControls.get(run.runId());
+        if (control != null && control.leaseLost()) throw new LeaseLostException(run.runId());
         if (control != null && control.cancellationRequested()) throw new WorkflowAbort(FailureCategory.CANCELLED);
+        try {
+            if (runStore.find(run.runId()).map(RunRecord::cancellationRequested).orElse(false)) {
+                if (control != null) control.requestCancellation();
+                throw new WorkflowAbort(FailureCategory.CANCELLED);
+            }
+        } catch (RunStoreUnavailableException temporarilyUnavailable) {
+            // The lease heartbeat is the authority for continued execution while the store is
+            // unavailable. It will stop this Run at the last confirmed lease expiry if renewal fails.
+            log.debug("runId={} cancellationCheck=store_unavailable", run.runId());
+        }
     }
 
     private void persist(RunRecord run) {
-        run.touch(Instant.now());
-        runStore.save(run);
+        synchronized (run) {
+            Instant now = Instant.now();
+            run.touch(now);
+            RunControl control = runControls.get(run.runId());
+            if (control != null && control.leaseLost()) throw new LeaseLostException(run.runId());
+            LeaseToken lease = runLeases.get(run.runId());
+            if (lease == null || !runStore.saveFenced(run, lease, now)) throw new LeaseLostException(run.runId());
+        }
     }
 
     private static final class WorkflowAbort extends Exception {
@@ -437,12 +550,20 @@ public final class AgentRuntime {
     private static final class RunControl {
         private boolean active;
         private boolean cancellationRequested;
+        private boolean leaseLost;
         private FutureTask<?> activeModelTask;
 
         synchronized void requestCancellation() {
             cancellationRequested = true;
             if (activeModelTask != null) activeModelTask.cancel(true);
         }
+
+        synchronized void loseLease() {
+            leaseLost = true;
+            if (activeModelTask != null) activeModelTask.cancel(true);
+        }
+
+        synchronized boolean leaseLost() { return leaseLost; }
 
         synchronized boolean cancellationRequested() { return cancellationRequested; }
 
