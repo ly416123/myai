@@ -34,7 +34,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: postgres-backup
-              image: docker.io/library/myai-postgres-backup:l5-20261113
+              image: docker.io/library/myai-postgres-backup:l5-20261113-db-ready
               imagePullPolicy: IfNotPresent
               env:
                 - name: PGHOST

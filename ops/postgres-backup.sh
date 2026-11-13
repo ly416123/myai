@@ -18,14 +18,25 @@ require_env AGE_RECIPIENT
 
 : "${PGPORT:=5432}"
 : "${PGSSLMODE:=verify-full}"
+: "${AGENT_DB_CONNECT_TIMEOUT_SECONDS:=60}"
+: "${AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS:=2}"
 export PGPORT PGSSLMODE
+
+if [[ ! "$AGENT_DB_CONNECT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]{0,2}$ ]] || (( AGENT_DB_CONNECT_TIMEOUT_SECONDS > 600 )); then
+  printf 'AGENT_DB_CONNECT_TIMEOUT_SECONDS must be an integer from 1 to 600\n' >&2
+  exit 2
+fi
+if [[ ! "$AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS" =~ ^[1-9][0-9]{0,1}$ ]] || (( AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS > 60 )); then
+  printf 'AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS must be an integer from 1 to 60\n' >&2
+  exit 2
+fi
 
 if [[ $# -ne 1 || "$1" != *.dump.age ]]; then
   printf 'Usage: %s /secure/path/run-store-YYYYMMDD.dump.age\n' "$0" >&2
   exit 2
 fi
-if ! command -v pg_dump >/dev/null || ! command -v age >/dev/null || ! command -v sha256sum >/dev/null; then
-  printf 'pg_dump, age, and sha256sum must be installed\n' >&2
+if ! command -v pg_isready >/dev/null || ! command -v pg_dump >/dev/null || ! command -v age >/dev/null || ! command -v sha256sum >/dev/null; then
+  printf 'pg_isready, pg_dump, age, and sha256sum must be installed\n' >&2
   exit 2
 fi
 
@@ -37,6 +48,34 @@ output_dir="$(cd "$output_dir" && pwd -P)"
 output="$output_dir/$output_base"
 checksum="$output.sha256"
 lock="$output.lock"
+
+started_at="$SECONDS"
+attempts=0
+while true; do
+  attempts=$((attempts + 1))
+  if pg_isready -h "$PGHOST" -p "$PGPORT" -d "$PGDATABASE" -U "$PGUSER" -t 1 >/dev/null 2>&1; then
+    break
+  else
+    readiness_status=$?
+  fi
+  if (( readiness_status != 1 && readiness_status != 2 )); then
+    printf 'pg_isready failed with non-retryable status %s\n' "$readiness_status" >&2
+    exit 2
+  fi
+
+  elapsed="$((SECONDS - started_at))"
+  if (( elapsed >= AGENT_DB_CONNECT_TIMEOUT_SECONDS )); then
+    printf 'Timed out waiting for PostgreSQL after %s seconds\n' "$AGENT_DB_CONNECT_TIMEOUT_SECONDS" >&2
+    exit 1
+  fi
+  remaining="$((AGENT_DB_CONNECT_TIMEOUT_SECONDS - elapsed))"
+  sleep_for="$AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS"
+  if (( sleep_for > remaining )); then sleep_for="$remaining"; fi
+  sleep "$sleep_for"
+done
+if (( attempts > 1 )); then
+  printf 'PostgreSQL connection became ready after %s checks\n' "$attempts"
+fi
 
 if ! mkdir "$lock" 2>/dev/null; then
   printf 'Backup destination is locked by another process\n' >&2

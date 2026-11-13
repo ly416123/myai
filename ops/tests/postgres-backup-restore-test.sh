@@ -7,6 +7,20 @@ trap 'rm -rf "$temp_dir"' EXIT
 mkdir "$temp_dir/bin" "$temp_dir/backups"
 export RESTORE_CAPTURE="$temp_dir/restored.dump"
 
+cat > "$temp_dir/bin/pg_isready" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ " $* " == *" -h $PGHOST "* ]]
+[[ " $* " == *" -p $PGPORT "* ]]
+[[ " $* " == *" -d $PGDATABASE "* ]]
+[[ " $* " == *" -U $PGUSER "* ]]
+attempts=0
+[[ ! -f "$PGISREADY_ATTEMPTS_FILE" ]] || attempts="$(cat "$PGISREADY_ATTEMPTS_FILE")"
+attempts=$((attempts + 1))
+printf '%s\n' "$attempts" > "$PGISREADY_ATTEMPTS_FILE"
+(( attempts > FAKE_PG_ISREADY_FAILS ))
+SH
+
 cat > "$temp_dir/bin/pg_dump" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -41,15 +55,21 @@ set -Eeuo pipefail
 cat > "$RESTORE_CAPTURE"
 grep -q '^DEMO-DATABASE-DUMP$' "$RESTORE_CAPTURE"
 SH
-chmod +x "$temp_dir/bin/pg_dump" "$temp_dir/bin/age" "$temp_dir/bin/pg_restore"
+chmod +x "$temp_dir/bin/pg_isready" "$temp_dir/bin/pg_dump" "$temp_dir/bin/age" "$temp_dir/bin/pg_restore"
 touch "$temp_dir/age.identity"
 
 export PATH="$temp_dir/bin:$PATH"
 export PGHOST=localhost PGPORT=55432 PGDATABASE=source_db PGUSER=backup_user
 export AGENT_DB_PASSWORD='pa:ss\word' AGE_RECIPIENT=age1testrecipient PGSSLMODE=disable
+export PGISREADY_ATTEMPTS_FILE="$temp_dir/pg-isready-attempts"
+export FAKE_PG_ISREADY_FAILS=2 AGENT_DB_CONNECT_TIMEOUT_SECONDS=10 AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS=1
 backup="$temp_dir/backups/run-store-test.dump.age"
 bash "$repo_root/ops/postgres-backup.sh" "$backup" > "$temp_dir/backup.log"
 [[ -s "$backup" && -s "$backup.sha256" ]]
+if [[ ! -f "$PGISREADY_ATTEMPTS_FILE" || "$(cat "$PGISREADY_ATTEMPTS_FILE")" != "3" ]]; then
+  printf 'Backup did not wait for PostgreSQL to become reachable\n' >&2
+  exit 1
+fi
 ! grep -q 'DEMO-DATABASE-DUMP' "$backup"
 ! grep -q 'pa:ss' "$temp_dir/backup.log"
 if bash "$repo_root/ops/postgres-backup.sh" "$backup" >/dev/null 2>&1; then
@@ -57,6 +77,16 @@ if bash "$repo_root/ops/postgres-backup.sh" "$backup" >/dev/null 2>&1; then
   exit 1
 fi
 [[ -s "$backup" && -s "$backup.sha256" ]]
+
+timeout_backup="$temp_dir/backups/timeout.dump.age"
+rm -f "$PGISREADY_ATTEMPTS_FILE"
+if AGENT_DB_CONNECT_TIMEOUT_SECONDS=2 AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS=1 FAKE_PG_ISREADY_FAILS=99 \
+    bash "$repo_root/ops/postgres-backup.sh" "$timeout_backup" > "$temp_dir/timeout.log" 2>&1; then
+  printf 'Backup continued although PostgreSQL never became reachable\n' >&2
+  exit 1
+fi
+[[ ! -e "$timeout_backup" && ! -e "$timeout_backup.sha256" ]]
+grep -q 'Timed out waiting for PostgreSQL after 2 seconds' "$temp_dir/timeout.log"
 
 export PGDATABASE=restore_db AGE_IDENTITY_FILE="$temp_dir/age.identity"
 export AGENT_RESTORE_CONFIRM_DATABASE=restore_db AGENT_ALLOW_DESTRUCTIVE_RESTORE=YES

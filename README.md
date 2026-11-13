@@ -70,7 +70,7 @@ CLI 可使用 `/enqueue <任务>` 或 `/multi-enqueue <任务>` 将 Run 以 `CRE
 
 ### PostgreSQL 加密备份与恢复
 
-`ops/postgres-backup.sh` 使用匹配 PostgreSQL 服务主版本的 `pg_dump`，通过独立 `age` 公钥加密流式备份，不在磁盘保留明文 dump；同时生成 SHA-256 校验文件。备份目标文件不会被覆盖。恢复脚本会先校验摘要，并要求显式授权和再次确认目标数据库名；它会清理目标库中的现有对象，因此优先恢复到新建的隔离数据库验证。
+`ops/postgres-backup.sh` 使用匹配 PostgreSQL 服务主版本的 `pg_dump`，通过独立 `age` 公钥加密流式备份，不在磁盘保留明文 dump；同时生成 SHA-256 校验文件。备份目标文件不会被覆盖。开始导出前会用 `pg_isready` 等待数据库可达，默认最多等待 60 秒、每 2 秒重试；可通过 `AGENT_DB_CONNECT_TIMEOUT_SECONDS`（1–600）和 `AGENT_DB_CONNECT_RETRY_INTERVAL_SECONDS`（1–60）调整。恢复脚本会先校验摘要，并要求显式授权和再次确认目标数据库名；它会清理目标库中的现有对象，因此优先恢复到新建的隔离数据库验证。
 
 先为备份建立独立密钥，私钥应放在与数据库和备份文件不同的受控位置：
 

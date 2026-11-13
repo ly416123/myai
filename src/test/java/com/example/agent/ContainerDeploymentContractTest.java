@@ -40,7 +40,7 @@ class ContainerDeploymentContractTest {
         assertTrue(overlay.contains("newTag: l5-20261113"));
         assertTrue(overlay.contains("newName: docker.io/library/myai-postgres-backup"));
         assertTrue(Files.readString(Path.of("deploy/k8s/base/postgres-backup-cronjob.yaml"))
-                .contains("image: docker.io/library/myai-postgres-backup:l5-20261113"));
+                .contains("image: docker.io/library/myai-postgres-backup:l5-20261113-db-ready"));
         assertTrue(manifest.contains("backoffLimit: 0"));
         assertFalse(manifest.contains("kind: Deployment"));
         assertProviderCredentialIsMountedAsReadOnlyFile(manifest);
