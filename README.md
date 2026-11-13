@@ -18,7 +18,7 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 本项目按企业级系统目标设计，不是学习项目。架构决策需要考虑持久化可靠性、并发与多实例协调、故障恢复、权限与敏感数据、可观测性、可测试性、部署升级和运维边界。Docker、关系型数据库、消息队列及远程硬件均可按实际需求采用；是否引入某项设施应由一致性、吞吐、可用性和运维成本等需求决定，不预设必须使用或禁止使用。
 
-企业化改造已落地第一批运行基线：Spring Boot 管理进程生命周期和配置，PostgreSQL/Flyway 保存 Run 与检查点，租约、fencing token 和版本条件保护并发写入；Micrometer/OTel 提供本地指标与可选 OTLP 导出。HTTP API 和生产身份认证授权短期不交付，测试使用 Fake/Mock 验证协议与边界。当前没有启用 MQ，也没有声称具备高可用。实施状态和剩余差距见[阶段 1–3 企业级架构升级方案](docs/architecture/enterprise-migration-roadmap.md)。
+企业化改造已落地第一批运行基线：Spring Boot 管理进程生命周期和配置，PostgreSQL/Flyway 保存 Run 与检查点，租约、fencing token 和版本条件保护并发写入；Micrometer/OTel 提供本地指标与可选 OTLP 导出。HTTP API 和生产身份认证授权短期不交付，测试使用 Fake/Mock 验证协议与边界。当前没有启用 MQ，也没有声称具备高可用。实施状态和剩余差距见[阶段 1–3 企业级架构升级方案](docs/architecture/enterprise-migration-roadmap.md)。 数据字段、存储位置、外部流向及尚待业务定级事项见[技术数据盘点](docs/security/data-inventory.md)。
 
 ### l5 环境
 
