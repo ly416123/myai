@@ -176,6 +176,27 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
+    void githubActionsDependenciesArePinnedToFullCommitShasAndAutoUpdated() throws Exception {
+        String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
+        Path dependabotPath = Path.of(".github/dependabot.yml");
+        String dependabot = Files.exists(dependabotPath) ? Files.readString(dependabotPath) : "";
+        long actionReferences = workflow.lines()
+                .filter(line -> line.stripLeading().startsWith("uses:"))
+                .count();
+        long pinnedActionReferences = workflow.lines()
+                .filter(line -> line.matches("\\s*uses:\\s+[^@\\s]+@[0-9a-f]{40}\\s+#\\s+v[0-9.]+\\s*"))
+                .count();
+
+        assertTrue(actionReferences > 0);
+        assertTrue(actionReferences == pinnedActionReferences,
+                "Every GitHub Action reference must use a full commit SHA and a release comment");
+        assertTrue(dependabot.contains("package-ecosystem: github-actions"));
+        assertTrue(dependabot.contains("interval: weekly"));
+        assertTrue(workflow.contains("persist-credentials: false"),
+                "Checkout must not persist the workflow token in the repository config");
+    }
+
+    @Test
     void containerImagesArePublishedOnlyAfterVerificationAndVulnerabilityScans() throws Exception {
         String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
 

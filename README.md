@@ -12,7 +12,7 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段三迭代提示词：Supervisor–Worker 多 Agent 协作](docs/plans/phase-03-iteration-prompt.md)
 - [阶段三：Supervisor–Worker 协作（复验通过）](docs/stages/phase-03-summary.html)
 
-每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。当前阶段架构图可直接查看：[阶段一](docs/stages/phase-01-summary.html#architecture)、[阶段二](docs/stages/phase-02-summary.html#architecture)、[阶段三](docs/stages/phase-03-summary.html#architecture)。详见项目根目录的 `AGENTS.md`。
+每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。阶段总结中的架构图是各阶段验收时点的历史快照，不代表当前企业架构的完整形态，可分别查看：[阶段一历史快照](docs/stages/phase-01-summary.html#architecture)、[阶段二历史快照](docs/stages/phase-02-summary.html#architecture)、[阶段三历史快照](docs/stages/phase-03-summary.html#architecture)。当前企业化架构与交付状态以[升级路线图](docs/architecture/enterprise-migration-roadmap.md)为准。详见项目根目录的 `AGENTS.md`。
 
 ## 项目定位与架构原则
 
