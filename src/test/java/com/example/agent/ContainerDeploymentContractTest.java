@@ -75,9 +75,9 @@ class ContainerDeploymentContractTest {
 
     @Test
     void prometheusAlertTemplateHasBoundedWorkerAndDatabaseSignals() throws Exception {
-        String rules = Files.readString(Path.of("ops/monitoring/agent-alerts.yaml"));
-        String deployed = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
+        String rules = Files.readString(Path.of("deploy/k8s/base/agent-alerts.yaml"));
 
+        assertTrue(rules.contains("MyAiCollectorTargetDown"));
         assertTrue(rules.contains("AgentWorkerQueueStalled"));
         assertTrue(rules.contains("myai_agent_worker_queue_oldest_seconds"));
         assertTrue(rules.contains("AgentExpiredRunLeases"));
@@ -85,13 +85,34 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentRecentRunFailures"));
         assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
-        assertTrue(deployed.contains("myai_agent_worker_queue_oldest_seconds"));
-        assertTrue(deployed.contains("myai_agent_worker_lease_expired_leases"));
-        assertTrue(deployed.contains("myai_agent_worker_run_failed_recent_runs"));
-        assertTrue(deployed.contains("myai_hikaricp_connections_active"));
+        assertTrue(rules.contains("myai_agent_worker_queue_oldest_seconds"));
+        assertTrue(rules.contains("myai_agent_worker_lease_expired_leases"));
+        assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
+        assertTrue(rules.contains("myai_hikaricp_connections_active"));
         assertTrue(Files.readString(Path.of("src/test/resources/otel/collector-config.yaml"))
                 .contains("namespace: myai"));
         assertFalse(rules.contains("run_id"));
+    }
+
+    @Test
+    void prometheusDeploymentAndRuleTestsShareTheSameCompleteAlertFile() throws Exception {
+        String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
+        String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
+        String rules = Files.readString(Path.of("deploy/k8s/base/agent-alerts.yaml"));
+        String ruleTests = Files.readString(Path.of("ops/monitoring/agent-alerts-test.yaml"));
+
+        assertTrue(kustomization.contains("configMapGenerator:"));
+        assertTrue(kustomization.contains("alerts.yml=base/agent-alerts.yaml"));
+        assertTrue(foundation.contains("/etc/prometheus/rules/alerts.yml"));
+        assertTrue(foundation.contains("mountPath: /etc/prometheus/rules"));
+        assertTrue(foundation.contains("name: myai-prometheus-rules"));
+        assertFalse(foundation.contains("alerts.yml: |"));
+        assertTrue(ruleTests.contains("agent-alerts.yaml"));
+        assertTrue(rules.contains("MyAiCollectorTargetDown"));
+        assertTrue(rules.contains("AgentWorkerQueueStalled"));
+        assertTrue(rules.contains("AgentExpiredRunLeases"));
+        assertTrue(rules.contains("AgentRecentRunFailures"));
+        assertTrue(rules.contains("AgentDatabasePoolNearCapacity"));
     }
 
     @Test

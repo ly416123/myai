@@ -1,9 +1,15 @@
-# Starter Prometheus rules. Thresholds are operational defaults, not agreed service SLOs.
-# Queue metrics are PostgreSQL-wide snapshots exported by each replica; max() avoids summing duplicates.
 groups:
   - name: myai-agent-runtime
     interval: 30s
     rules:
+      - alert: MyAiCollectorTargetDown
+        expr: up{job="myai-otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: MyAI telemetry collector metrics endpoint is unavailable
+
       - alert: AgentWorkerQueueStalled
         expr: max(myai_agent_worker_queue_oldest_seconds) > 300
         for: 5m

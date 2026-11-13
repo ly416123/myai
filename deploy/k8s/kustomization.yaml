@@ -8,3 +8,7 @@ resources:
   - base/postgres-backup-cronjob.yaml
   - base/network-policies.yaml
   - base/model-egress-proxy.yaml
+configMapGenerator:
+  - name: myai-prometheus-rules
+    files:
+      - alerts.yml=base/agent-alerts.yaml

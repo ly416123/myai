@@ -123,50 +123,11 @@ data:
     global:
       scrape_interval: 15s
     rule_files:
-      - /etc/prometheus/alerts.yml
+      - /etc/prometheus/rules/alerts.yml
     scrape_configs:
       - job_name: myai-otel-collector
         static_configs:
           - targets: [myai-otel-collector:9464]
-  alerts.yml: |
-    groups:
-      - name: myai-agent-runtime
-        rules:
-          - alert: MyAiCollectorTargetDown
-            expr: up{job="myai-otel-collector"} == 0
-            for: 2m
-            labels:
-              severity: warning
-            annotations:
-              summary: MyAI telemetry collector metrics endpoint is unavailable
-          - alert: AgentWorkerQueueStalled
-            expr: max(myai_agent_worker_queue_oldest_seconds) > 300
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Agent queue has waited over five minutes
-          - alert: AgentExpiredRunLeases
-            expr: max(myai_agent_worker_lease_expired_leases) > 0
-            for: 2m
-            labels:
-              severity: warning
-            annotations:
-              summary: One or more Run leases have expired
-          - alert: AgentRecentRunFailures
-            expr: max(myai_agent_worker_run_failed_recent_runs) > 0
-            for: 1m
-            labels:
-              severity: warning
-            annotations:
-              summary: One or more Runs failed within the last five minutes
-          - alert: AgentDatabasePoolNearCapacity
-            expr: sum(myai_hikaricp_connections_active) / sum(myai_hikaricp_connections_max) > 0.9
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Agent database connection pool is near capacity
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -232,6 +193,7 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: rules, mountPath: /etc/prometheus/rules, readOnly: true}
             - {name: consoles, mountPath: /etc/prometheus/consoles, readOnly: true}
             - {name: data, mountPath: /prometheus}
             - {name: tmp, mountPath: /tmp}
@@ -239,6 +201,9 @@ spec:
         - name: config
           configMap:
             name: myai-prometheus
+        - name: rules
+          configMap:
+            name: myai-prometheus-rules
         - name: consoles
           configMap:
             name: myai-agent-overview

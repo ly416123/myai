@@ -59,7 +59,7 @@ class OtlpExporterIntegrationTest {
             "myai_agent_worker_run_failed_recent_runs",
             "myai_hikaricp_connections_active",
             "myai_hikaricp_connections_max");
-    private static final Set<String> SUPPORTED_PROMQL_FUNCTIONS = Set.of("max", "sum");
+    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("max", "sum", "up");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -129,10 +129,11 @@ class OtlpExporterIntegrationTest {
     private static void assertAlertMetricsAreExported(String scrape) throws Exception {
         Pattern tokenPattern = Pattern.compile("[a-zA-Z_:][a-zA-Z0-9_:]*");
         var expressionTokens = new LinkedHashSet<String>();
-        for (String line : Files.readAllLines(Path.of("ops/monitoring/agent-alerts.yaml"))) {
+        for (String line : Files.readAllLines(Path.of("deploy/k8s/base/agent-alerts.yaml"))) {
             String trimmed = line.trim();
             if (!trimmed.startsWith("expr:")) continue;
-            Matcher matcher = tokenPattern.matcher(trimmed.substring("expr:".length()));
+            String expression = trimmed.substring("expr:".length()).replaceAll("\\{[^}]*}", " ");
+            Matcher matcher = tokenPattern.matcher(expression);
             while (matcher.find()) expressionTokens.add(matcher.group());
         }
         var unexpectedTokens = new HashSet<>(expressionTokens);
@@ -140,7 +141,7 @@ class OtlpExporterIntegrationTest {
         assertTrue(!expressionTokens.isEmpty(), "alert rules should contain metric expressions");
         assertTrue(expressionTokens.containsAll(EXPECTED_ALERT_METRICS),
                 () -> "Alert expressions do not reference all expected metrics: " + EXPECTED_ALERT_METRICS);
-        unexpectedTokens.removeAll(SUPPORTED_PROMQL_FUNCTIONS);
+        unexpectedTokens.removeAll(SUPPORTED_PROMQL_SYMBOLS);
         assertTrue(unexpectedTokens.isEmpty(),
                 () -> "Update the alert metric contract when PromQL functions or identifiers change: " + unexpectedTokens);
 

@@ -8,6 +8,8 @@ tests:
   - name: alert state transitions
     interval: 30s
     input_series:
+      - series: 'up{job="myai-otel-collector"}'
+        values: "0+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "301+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -20,6 +22,9 @@ tests:
         values: "10+0x20"
     alert_rule_test:
       - eval_time: 30s
+        alertname: MyAiCollectorTargetDown
+        exp_alerts: []
+      - eval_time: 30s
         alertname: AgentWorkerQueueStalled
         exp_alerts: []
       - eval_time: 30s
@@ -31,6 +36,14 @@ tests:
       - eval_time: 30s
         alertname: AgentDatabasePoolNearCapacity
         exp_alerts: []
+      - eval_time: 2m
+        alertname: MyAiCollectorTargetDown
+        exp_alerts:
+          - exp_labels:
+              job: myai-otel-collector
+              severity: warning
+            exp_annotations:
+              summary: MyAI telemetry collector metrics endpoint is unavailable
       - eval_time: 2m
         alertname: AgentExpiredRunLeases
         exp_alerts:
@@ -67,6 +80,8 @@ tests:
   - name: alert thresholds do not fire at boundary
     interval: 30s
     input_series:
+      - series: 'up{job="myai-otel-collector"}'
+        values: "1+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "300+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -78,6 +93,9 @@ tests:
       - series: myai_hikaricp_connections_max
         values: "10+0x20"
     alert_rule_test:
+      - eval_time: 10m
+        alertname: MyAiCollectorTargetDown
+        exp_alerts: []
       - eval_time: 10m
         alertname: AgentWorkerQueueStalled
         exp_alerts: []

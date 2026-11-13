@@ -70,7 +70,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前规则含 Collector target down、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟。规则细节以 [告警配置](../../ops/monitoring/agent-alerts.yaml) 和 L5 ConfigMap 为准。告警只保存在 Prometheus；没有外部通知路径。
+当前规则含 Collector target down、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
