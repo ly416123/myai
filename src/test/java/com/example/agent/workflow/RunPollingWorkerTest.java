@@ -59,16 +59,19 @@ class RunPollingWorkerTest {
         store.save(queued);
         var meters = new SimpleMeterRegistry();
         var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());
+        telemetry.configureRunWorkers(1);
 
         Path marker = tempDirectory.resolve("worker-ready");
         try (RunPollingWorker worker = new RunPollingWorker(store, run -> run, 1, Duration.ofSeconds(60), telemetry,
                 new WorkerHealthFile(marker))) {
-            worker.pollOnce();
+            worker.pollSafely();
 
             assertEquals(1.0, meters.get("agent.worker.queue.depth").gauge().value());
             assertEquals(0.0, meters.get("agent.worker.lease.expired").gauge().value());
             assertTrue(meters.get("agent.worker.queue.oldest").gauge().value() >= 0.0);
             assertTrue(new WorkerHealthFile(marker).isFresh(Duration.ofSeconds(15)));
+            assertEquals(1.0, meters.get("agent.worker.poll.heartbeat")
+                    .tag("worker_type", "run").counter().count());
         }
     }
 

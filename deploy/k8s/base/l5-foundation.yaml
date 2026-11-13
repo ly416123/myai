@@ -30,6 +30,9 @@ data:
         namespace: myai
         send_timestamps: true
         metric_expiration: 5m
+        resource_constant_labels:
+          included:
+            - service.instance.id
       debug:
         verbosity: basic
       otlphttp/tempo:

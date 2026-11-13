@@ -72,3 +72,12 @@ groups:
         annotations:
           summary: Agent worker queue telemetry is missing
           description: Check worker readiness and the OTLP metrics path through the collector.
+
+      - alert: AgentWorkerInstanceMissing
+        expr: count(myai_agent_worker_poll_heartbeat_total{worker_type="run"}) < max(myai_agent_worker_instances_expected{worker_type="run"})
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: One or more Agent Worker instances have stopped reporting
+          description: Counter series expire from the collector after 5m; alert onset can lag worker loss by approximately 7m.

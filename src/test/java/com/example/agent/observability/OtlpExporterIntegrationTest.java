@@ -54,7 +54,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
         "AGENT_OTLP_TRACES_ENABLED=true",
         "AGENT_TRACE_SAMPLING=1",
         "management.otlp.metrics.export.step=1s",
-        "management.tracing.opentelemetry.export.schedule-delay=1s"
+        "management.tracing.opentelemetry.export.schedule-delay=1s",
+        "management.opentelemetry.resource-attributes.service.instance.id=contract-test-worker"
 })
 class OtlpExporterIntegrationTest {
     private static final Set<String> EXPECTED_ALERT_METRICS = Set.of(
@@ -63,9 +64,11 @@ class OtlpExporterIntegrationTest {
             "myai_agent_worker_lease_expired_leases",
             "myai_agent_worker_run_failed_recent_runs",
             "myai_agent_worker_poll_failures_total",
+            "myai_agent_worker_poll_heartbeat_total",
+            "myai_agent_worker_instances_expected",
             "myai_hikaricp_connections_active",
             "myai_hikaricp_connections_max");
-    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "increase", "max", "or", "sum", "time", "up");
+    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "count", "increase", "max", "or", "sum", "time", "up");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
@@ -125,6 +128,8 @@ class OtlpExporterIntegrationTest {
     void exportsTelemetryAndAlertMetricNamesThroughOtlpCollector() throws Exception {
         telemetry.recordQueueSnapshot(new RunQueueSnapshot(7, 2, 3, Duration.ofSeconds(45)));
         telemetry.recordWorkerPollFailure();
+        telemetry.configureRunWorkers(2);
+        telemetry.recordRunWorkerPollHeartbeat();
         assertNotNull(meters.find("hikaricp.connections.active").gauge(), "Hikari pool gauges must be bound locally");
         meters.counter("agent.otlp.export.probe").increment();
         Observation.createNotStarted("myai.otlp.export.probe", observations).start().stop();
@@ -175,6 +180,9 @@ class OtlpExporterIntegrationTest {
                 + missingSamples + "; exported agent metrics: " + sampleNames.stream()
                 .filter(name -> name.startsWith("myai_agent_worker") || name.startsWith("myai_hikaricp_connections"))
                 .sorted().toList());
+        assertTrue(scrape.lines().anyMatch(line -> line.startsWith("myai_agent_worker_poll_heartbeat_total{")
+                        && line.contains("service_instance_id=\"contract-test-worker\"")),
+                "Collector should preserve the configured worker instance resource attribute");
     }
 
     private static Set<String> prometheusSampleNames(String exposition) {

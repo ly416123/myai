@@ -57,6 +57,9 @@ logging:
     root: INFO
 
 management:
+  opentelemetry:
+    resource-attributes:
+      service.instance.id: ${MYAI_WORKER_INSTANCE_ID:local}
   endpoints:
     enabled-by-default: false
   tracing:

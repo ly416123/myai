@@ -160,6 +160,10 @@ public class AgentConfiguration {
     @ConditionalOnProperty(prefix = "agent", name = "execution-mode", havingValue = "worker")
     RunPollingWorker runPollingWorker(RunStore store, AgentRuntime runtime, CollaborativeWorkflow collaborative,
                                       AgentProperties properties, AgentTelemetry telemetry) {
+        if (properties.getWorkerExpectedInstances() < 1) {
+            throw new IllegalStateException("Expected worker instance count must be positive");
+        }
+        telemetry.configureRunWorkers(properties.getWorkerExpectedInstances());
         return new RunPollingWorker(store, new RunPollingWorker.RunRecoveryHandler() {
             @Override
             public com.example.agent.workflow.RunRecord resume(com.example.agent.workflow.RunRecord run) {
@@ -197,7 +201,8 @@ public class AgentConfiguration {
                 || properties.getTaskTimeout() == null || properties.getTaskTimeout().isNegative()
                 || properties.getTaskTimeout().isZero() || properties.getMaxModelCalls() < 1
                 || properties.getMaxToolCalls() < 0 || properties.getMaxModelRetries() < 0
-                || properties.getMaxTasks() < 1 || properties.getMaxParallelism() < 1) {
+                || properties.getMaxTasks() < 1 || properties.getMaxParallelism() < 1
+                || properties.getWorkerExpectedInstances() < 1) {
             throw new IllegalStateException("Invalid agent runtime configuration");
         }
     }

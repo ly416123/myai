@@ -109,6 +109,22 @@ class AgentTelemetryTest {
     }
 
     @Test
+    void reportsExpectedRunWorkersAndSuccessfulPollHeartbeatsWithBoundedIdentity() {
+        var meters = new SimpleMeterRegistry();
+        var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());
+
+        telemetry.configureRunWorkers(2);
+        telemetry.recordRunWorkerPollHeartbeat();
+
+        assertEquals(2.0, meters.get("agent.worker.instances.expected")
+                .tag("worker_type", "run").gauge().value());
+        assertEquals(1.0, meters.get("agent.worker.poll.heartbeat")
+                .tag("worker_type", "run").counter().count());
+        meters.getMeters().forEach(meter -> assertTrue(meter.getId().getTags().stream()
+                .allMatch(tag -> tag.getKey().equals("worker_type") && tag.getValue().equals("run"))));
+    }
+
+    @Test
     void recordsWorkerQueueWaitWithOnlyBoundedTags() {
         var meters = new SimpleMeterRegistry();
         var telemetry = new AgentTelemetry(meters, ObservationRegistry.create());

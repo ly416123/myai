@@ -32,4 +32,12 @@ class AgentPropertiesTest {
         assertEquals(Duration.ofSeconds(30), properties.getRunLeaseDuration());
         assertEquals(Duration.ofSeconds(10), properties.getRunLeaseRenewalInterval());
     }
+
+    @Test
+    void expectedRunWorkerCountDefaultsToOneAndCanBeConfigured() {
+        var properties = new AgentProperties();
+        assertEquals(1, properties.getWorkerExpectedInstances());
+        properties.setWorkerExpectedInstances(2);
+        assertEquals(2, properties.getWorkerExpectedInstances());
+    }
 }

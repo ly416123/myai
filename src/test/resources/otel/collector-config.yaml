@@ -13,6 +13,9 @@ exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
     namespace: myai
+    resource_constant_labels:
+      included:
+        - service.instance.id
 
 service:
   pipelines:

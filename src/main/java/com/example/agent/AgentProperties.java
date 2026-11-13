@@ -27,6 +27,7 @@ public class AgentProperties {
     private String executionMode = "interactive";
     private String task;
     private int workerConcurrency = 4;
+    private int workerExpectedInstances = 1;
     private Duration workerPollInterval = Duration.ofSeconds(1);
     private Duration retentionPeriod = Duration.ZERO;
     private int retentionBatchSize = 500;
@@ -76,6 +77,8 @@ public class AgentProperties {
     public void setTask(String task) { this.task = task; }
     public int getWorkerConcurrency() { return workerConcurrency; }
     public void setWorkerConcurrency(int workerConcurrency) { this.workerConcurrency = workerConcurrency; }
+    public int getWorkerExpectedInstances() { return workerExpectedInstances; }
+    public void setWorkerExpectedInstances(int workerExpectedInstances) { this.workerExpectedInstances = workerExpectedInstances; }
     public Duration getWorkerPollInterval() { return workerPollInterval; }
     public void setWorkerPollInterval(Duration workerPollInterval) { this.workerPollInterval = workerPollInterval; }
     public Duration getRetentionPeriod() { return retentionPeriod; }

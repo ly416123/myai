@@ -33,6 +33,7 @@ public final class AgentTelemetry {
     private final AtomicLong expiredLeases = new AtomicLong();
     private final AtomicLong recentFailedRuns = new AtomicLong();
     private final AtomicLong oldestQueueWaitMillis = new AtomicLong();
+    private final AtomicLong expectedRunWorkers = new AtomicLong(1);
 
     public AgentTelemetry(MeterRegistry meters, ObservationRegistry observations) {
         this.meters = meters;
@@ -141,6 +142,22 @@ public final class AgentTelemetry {
     /** Records a failed background poll without attaching exception text or unbounded identifiers. */
     public void recordWorkerPollFailure() {
         if (meters != null) meters.counter("agent.worker.poll.failures").increment();
+    }
+
+    /** Publishes the configured desired Run Worker replica count for availability alerting. */
+    public void configureRunWorkers(int expectedInstances) {
+        if (expectedInstances < 1) throw new IllegalArgumentException("Expected worker count must be positive");
+        expectedRunWorkers.set(expectedInstances);
+        if (meters != null) {
+            io.micrometer.core.instrument.Gauge.builder("agent.worker.instances.expected", expectedRunWorkers,
+                            AtomicLong::get)
+                    .tag("worker_type", "run").baseUnit("instances").register(meters);
+        }
+    }
+
+    /** Records one successful queue poll; pod identity is added as an OTLP resource attribute by the exporter. */
+    public void recordRunWorkerPollHeartbeat() {
+        if (meters != null) meters.counter("agent.worker.poll.heartbeat", "worker_type", "run").increment();
     }
 
     /** Updates aggregate worker backlog gauges; no per-run identifiers are attached to metrics. */

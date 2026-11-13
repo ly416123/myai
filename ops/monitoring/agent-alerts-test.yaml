@@ -22,6 +22,12 @@ tests:
         values: "1+0x20"
       - series: myai_agent_worker_poll_failures_total
         values: "1+1x20"
+      - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-a"}'
+        values: "1+1x20"
+      - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-b"}'
+        values: "1+1x20"
+      - series: 'myai_agent_worker_instances_expected{worker_type="run"}'
+        values: "2+0x20"
       - series: myai_hikaricp_connections_active
         values: "10+0x20"
       - series: myai_hikaricp_connections_max
@@ -105,6 +111,9 @@ tests:
             exp_annotations:
               summary: Agent worker cannot poll its persistent queue
               description: Check PostgreSQL availability and worker readiness; repeated polling failures may delay queued Runs.
+      - eval_time: 2m
+        alertname: AgentWorkerInstanceMissing
+        exp_alerts: []
 
   - name: thresholds do not fire at boundary
     interval: 30s
@@ -123,6 +132,12 @@ tests:
         values: "0+0x20"
       - series: myai_agent_worker_poll_failures_total
         values: "0+0x20"
+      - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-a"}'
+        values: "1+1x20"
+      - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-b"}'
+        values: "1+1x20"
+      - series: 'myai_agent_worker_instances_expected{worker_type="run"}'
+        values: "2+0x20"
       - series: myai_hikaricp_connections_active
         values: "9+0x20"
       - series: myai_hikaricp_connections_max
@@ -152,6 +167,9 @@ tests:
       - eval_time: 10m
         alertname: AgentWorkerTelemetryMissing
         exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentWorkerInstanceMissing
+        exp_alerts: []
 
   - name: missing worker telemetry is detected
     interval: 30s
@@ -164,3 +182,22 @@ tests:
             exp_annotations:
               summary: Agent worker queue telemetry is missing
               description: Check worker readiness and the OTLP metrics path through the collector.
+
+  - name: missing one expected worker instance is detected
+    interval: 30s
+    input_series:
+      - series: myai_agent_worker_queue_depth_runs
+        values: "0+0x20"
+      - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-a"}'
+        values: "1+1x20"
+      - series: 'myai_agent_worker_instances_expected{worker_type="run"}'
+        values: "2+0x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AgentWorkerInstanceMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: One or more Agent Worker instances have stopped reporting
+              description: Counter series expire from the collector after 5m; alert onset can lag worker loss by approximately 7m.

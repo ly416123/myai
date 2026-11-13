@@ -6,7 +6,7 @@ resources:
 images:
   - name: registry.example.invalid/myai
     newName: docker.io/library/myai-agent
-    newTag: l5-20261114-poll-alert
+    newTag: l5-20261114-worker-instance
   - name: registry.example.invalid/myai-model-egress-proxy
     newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113

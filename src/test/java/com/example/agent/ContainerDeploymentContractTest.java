@@ -91,6 +91,8 @@ class ContainerDeploymentContractTest {
         String runtime = Files.readString(Path.of("deploy/k8s/base/l5-postgres.yaml"));
         assertTrue(runtime.contains("sslmode=verify-full"));
         assertTrue(manifest.contains("/tmp/myai-worker-live"));
+        assertTrue(manifest.contains("AGENT_WORKER_EXPECTED_INSTANCES"));
+        assertTrue(manifest.contains("fieldPath: metadata.name"));
         assertFalse(manifest.contains("httpGet:"));
         assertProviderCredentialIsMountedAsReadOnlyFile(manifest);
     }
@@ -109,6 +111,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("myai_agent_worker_poll_failures_total"));
         assertTrue(rules.contains("AgentWorkerTelemetryMissing"));
         assertTrue(rules.contains("absent(myai_agent_worker_queue_depth_runs)"));
+        assertTrue(rules.contains("AgentWorkerInstanceMissing"));
+        assertTrue(rules.contains("count(myai_agent_worker_poll_heartbeat_total"));
         assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
         assertTrue(rules.contains("myai_agent_worker_queue_oldest_seconds"));
@@ -117,6 +121,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
         assertTrue(Files.readString(Path.of("src/test/resources/otel/collector-config.yaml"))
                 .contains("namespace: myai"));
+        assertTrue(Files.readString(Path.of("src/test/resources/otel/collector-config.yaml"))
+                .contains("service.instance.id"));
         assertFalse(rules.contains("run_id"));
     }
 
@@ -237,6 +243,7 @@ class ContainerDeploymentContractTest {
         assertFalse(foundation.contains("alerts.yml: |"));
         assertTrue(ruleTests.contains("agent-alerts.yaml"));
         assertTrue(ruleTests.contains("missing worker telemetry is detected"));
+        assertTrue(ruleTests.contains("missing one expected worker instance is detected"));
         assertTrue(rules.contains("MyAiCollectorTargetDown"));
         assertTrue(rules.contains("MyAiTempoTargetDown"));
         assertTrue(rules.contains("up{job=\"myai-tempo\"} == 0"));
@@ -244,6 +251,7 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentExpiredRunLeases"));
         assertTrue(rules.contains("AgentRecentRunFailures"));
         assertTrue(rules.contains("AgentDatabasePoolNearCapacity"));
+        assertTrue(rules.contains("AgentWorkerInstanceMissing"));
         assertFalse(rules.contains("AgentBackupStale"));
         assertFalse(rules.contains("AgentKubeStateMetricsDown"));
     }
