@@ -63,3 +63,12 @@ groups:
         annotations:
           summary: Agent worker cannot poll its persistent queue
           description: Check PostgreSQL availability and worker readiness; repeated polling failures may delay queued Runs.
+
+      - alert: AgentWorkerTelemetryMissing
+        expr: absent(myai_agent_worker_queue_depth_runs)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent worker queue telemetry is missing
+          description: Check worker readiness and the OTLP metrics path through the collector.

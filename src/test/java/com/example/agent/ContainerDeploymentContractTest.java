@@ -107,6 +107,8 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentRecentRunFailures"));
         assertTrue(rules.contains("AgentWorkerPollingFailures"));
         assertTrue(rules.contains("myai_agent_worker_poll_failures_total"));
+        assertTrue(rules.contains("AgentWorkerTelemetryMissing"));
+        assertTrue(rules.contains("absent(myai_agent_worker_queue_depth_runs)"));
         assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
         assertTrue(rules.contains("myai_agent_worker_queue_oldest_seconds"));
@@ -234,6 +236,7 @@ class ContainerDeploymentContractTest {
         assertTrue(foundation.contains("name: myai-prometheus-rules"));
         assertFalse(foundation.contains("alerts.yml: |"));
         assertTrue(ruleTests.contains("agent-alerts.yaml"));
+        assertTrue(ruleTests.contains("missing worker telemetry is detected"));
         assertTrue(rules.contains("MyAiCollectorTargetDown"));
         assertTrue(rules.contains("MyAiTempoTargetDown"));
         assertTrue(rules.contains("up{job=\"myai-tempo\"} == 0"));

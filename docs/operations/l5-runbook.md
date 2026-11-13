@@ -7,7 +7,7 @@
 最近核对时间：2026-11-14。
 
 - 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261114-enterprise`（2026-11-14 更新，2/2 Ready、0 次重启）；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、Tempo、Grafana 各 1 副本。
+- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261114-poll-alert`（2026-11-14 更新，2/2 Ready、0 次重启）；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、Tempo、Grafana 各 1 副本。
 - Worker 通过 OTel Collector 将 Trace 写入 Tempo，Grafana 提供内部查询入口。2026-11-14 验收时 Tempo/Grafana 均 1/1 Ready；合成 Trace 从 Collector OTLP HTTP 接收（200）到 Tempo Trace ID 查询（200），Grafana Tempo 数据源健康检查为 `OK`。同日受控故障演练中，Tempo 暂停期间 Collector 接受一条合成 Trace；Collector 随后在 Tempo 仍暂停时重启，Tempo 恢复后 Trace ID 查询返回 1 个 span。此结果只证明该次进程重启和短暂后端不可用场景下的队列恢复，不证明节点/磁盘故障恢复或零丢失。Trace resource 标记 `deployment.environment.name=l5`；Prometheus 对 Collector 和 Tempo 的活动抓取目标带 `environment=l5`。Tempo 使用单副本、10 GiB `local-path` PVC、保留 7 天；Grafana 使用临时本地数据目录，仪表盘/用户状态在 Pod 重建后不保证保留。Collector 文件发送队列为 1 GiB，本地持久化，单批发送重试窗口最长 1 小时。首次部署期间超过原 5 分钟重试窗口的少量 Trace 已被 Collector 丢弃，无法恢复。PVC 不能承受 L5 单节点/磁盘损坏；没有备份或异地恢复。Grafana/Tempo 仅为 ClusterIP，不对集群外开放；Grafana 匿名访问关闭。
 - PostgreSQL 16 使用 5 GiB `local-path` PVC。当前没有数据库备份与恢复流程；卷或节点损坏可能导致 Run 与检查点丢失。CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
@@ -80,7 +80,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前 7 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟，以及 Worker 轮询失败计数在 5 分钟内增加并持续 1 分钟。Worker 轮询失败只记录无标签计数，不记录异常正文；该信号用于发现进程仍运行但数据库队列轮询连续失败的情况。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 8 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟、Worker 轮询失败计数在 5 分钟内增加并持续 1 分钟，以及 Worker 队列深度指标持续缺失 2 分钟。Worker 轮询失败只记录无标签计数，不记录异常正文；队列深度指标缺失告警可发现整个 Worker 指标链路中断。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 

@@ -12,6 +12,8 @@ tests:
         values: "0+0x20"
       - series: 'up{job="myai-tempo"}'
         values: "0+0x20"
+      - series: myai_agent_worker_queue_depth_runs
+        values: "0+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "301+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -111,6 +113,8 @@ tests:
         values: "1+0x20"
       - series: 'up{job="myai-tempo"}'
         values: "1+0x20"
+      - series: myai_agent_worker_queue_depth_runs
+        values: "0+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "300+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -145,3 +149,18 @@ tests:
       - eval_time: 10m
         alertname: AgentWorkerPollingFailures
         exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentWorkerTelemetryMissing
+        exp_alerts: []
+
+  - name: missing worker telemetry is detected
+    interval: 30s
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AgentWorkerTelemetryMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Agent worker queue telemetry is missing
+              description: Check worker readiness and the OTLP metrics path through the collector.

@@ -58,6 +58,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 })
 class OtlpExporterIntegrationTest {
     private static final Set<String> EXPECTED_ALERT_METRICS = Set.of(
+            "myai_agent_worker_queue_depth_runs",
             "myai_agent_worker_queue_oldest_seconds",
             "myai_agent_worker_lease_expired_leases",
             "myai_agent_worker_run_failed_recent_runs",
