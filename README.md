@@ -104,7 +104,7 @@ CLI 可使用 `/enqueue <任务>` 或 `/multi-enqueue <任务>` 将 Run 以 `CRE
     docker build -f ops/backup.Dockerfile -t myai-postgres-backup:dev .
     MYAI_BACKUP_IMAGE=myai-postgres-backup:dev ops/tests/postgres-backup-restore-smoke.sh
 
-L5 overlay 描述每日备份配置；集群 CronJob 已启用，`myai-backup-config` ConfigMap 和 5Gi `myai-postgres-backups` PVC 已创建并 Bound。CronJob 引用既有 `myai-database` 密码 Secret，以 age 公钥加密归档，并按 30 天策略清理。PostgreSQL 已启用 TLS；Worker 与备份客户端均使用 CA 和服务 DNS 名执行 `verify-full` 校验。TLS 配置在 L5 通过 PostgreSQL 客户端握手和实际备份 Job 验证。归档 PVC 与数据库 PVC 位于同一 L5 节点，不能替代异地备份或节点故障恢复副本；用户已决定短期不建设异地备份和 CA 签名密钥故障/托管方案；告警通知接收端仍未配置，尚待确定目标。CronJob 使用预导入并扫描的 linux/amd64 备份镜像。保留清理只删除指定数据库、超过保留期、具备校验文件且无活动锁的归档。镜像使用 PostgreSQL 16 Alpine，并在构建前运行 `ops/fetch-age.sh`，从固定版本工具链构建 age CLI，工具链归档按固定 SHA-256 校验。
+L5 overlay 描述每日备份配置；集群 CronJob 已启用，`myai-backup-config` ConfigMap 和 5Gi `myai-postgres-backups` PVC 已创建并 Bound。CronJob 引用既有 `myai-database` 密码 Secret，以 age 公钥加密归档，并按 30 天策略清理。PostgreSQL 已启用 TLS；Worker 与备份客户端均使用 CA 和服务 DNS 名执行 `verify-full` 校验。TLS 配置在 L5 通过 PostgreSQL 客户端握手和实际备份 Job 验证。归档 PVC 与数据库 PVC 位于同一 L5 节点，不能替代异地备份或节点故障恢复副本；用户已决定短期不建设异地备份、CA 签名密钥故障/托管方案及告警通知投递；Prometheus 规则和本地告警状态保留。CronJob 使用预导入并扫描的 linux/amd64 备份镜像。保留清理只删除指定数据库、超过保留期、具备校验文件且无活动锁的归档。镜像使用 PostgreSQL 16 Alpine，并在构建前运行 `ops/fetch-age.sh`，从固定版本工具链构建 age CLI，工具链归档按固定 SHA-256 校验。
 
 CLI 命令：
 
@@ -127,7 +127,7 @@ CLI 命令：
 
     mvn clean test
 
-Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector 和 Prometheus，五条告警规则均已加载；告警接收路由尚未配置。Prometheus 修复版升级尚待完成。
+Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector 和 Prometheus，五条告警规则均已加载；按用户决定，短期只保留本地规则与告警状态，不投递通知。Prometheus 修复版升级尚待完成。
 
 ## Workflow 状态与恢复语义
 
@@ -180,9 +180,9 @@ RunRecord 和步骤记录至少包含：
 
 CLI /runs 展示简要汇总。日志只输出 ID、工具名、状态、耗时、失败类别和用量是否可知；不输出 API Key、消息正文、工具参数或原始异常文本。
 
-Worker 轮询时刷新三个 PostgreSQL 聚合 Gauge：`agent.worker.queue.depth`（可恢复 Run 数）、`agent.worker.lease.expired`（已过期 Run 租约数）和 `agent.worker.queue.oldest`（最老可恢复 Run 的等待秒数）。这些值不带 Run ID 等高基数标签。每个 Worker 副本观测的是同一份数据库全局队列快照，多副本聚合仪表盘应按最大值/单实例代表读取，不能把副本样本求和。Spring Boot/Hikari 还会自动绑定 `hikaricp.connections.active`、`hikaricp.connections.max` 等连接池指标。OTLP metrics/traces 默认关闭。`OtlpExporterIntegrationTest` 使用 Testcontainers 启动临时 OpenTelemetry Collector，验证真实 OTLP 推送、trace 接收，以及告警 PromQL 中的指标名与 Collector Prometheus 样本一致；Prometheus 导出名包含单位后缀，例如租约数为 `agent_worker_lease_expired_leases`。测试使用未连接真实数据库的 Hikari 池验证连接池指标，不额外启动 PostgreSQL；该测试不部署长期监控后端或告警接收端。
+Worker 轮询时刷新四个 PostgreSQL 聚合 Gauge：`agent.worker.queue.depth`（可恢复 Run 数）、`agent.worker.lease.expired`（已过期 Run 租约数）、`agent.worker.queue.oldest`（最老可恢复 Run 的等待秒数）和 `agent.worker.run.failed.recent`（最近 5 分钟失败 Run 数）。这些值不带 Run ID 等高基数标签。每个 Worker 副本观测的是同一份数据库全局队列快照，多副本聚合仪表盘应按最大值/单实例代表读取，不能把副本样本求和。Spring Boot/Hikari 还会自动绑定 `hikaricp.connections.active`、`hikaricp.connections.max` 等连接池指标。OTLP metrics/traces 默认关闭。`OtlpExporterIntegrationTest` 使用 Testcontainers 启动临时 OpenTelemetry Collector，验证真实 OTLP 推送、trace 接收，以及告警 PromQL 中的指标名与 Collector Prometheus 样本一致；Prometheus 导出名包含单位后缀，例如租约数为 `agent_worker_lease_expired_leases`。测试使用 Testcontainers PostgreSQL 和已连接的 Hikari 池验证连接池指标；该测试不部署长期监控后端。
 
-Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 起步告警规则模板位于 `ops/monitoring/agent-alerts.yaml`，覆盖队列等待、过期租约和 Hikari 连接池；阈值是运维起点，不是业务 SLO。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称映射；L5 已部署长期运行的单副本 Collector/Prometheus 和双副本 Worker，五条 Prometheus 告警规则已加载，包含近期失败 Run 规则。仍需设置环境标签、确认多副本队列 Gauge 聚合口径并配置告警路由。当前没有 Grafana、Alertmanager/告警接收端或外部集中监控后端。
+Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 起步告警规则模板位于 `ops/monitoring/agent-alerts.yaml`，覆盖队列等待、过期租约、近 5 分钟失败 Run 和 Hikari 连接池；阈值是运维起点，不是业务 SLO。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称映射；L5 已部署长期运行的单副本 Collector/Prometheus 和双副本 Worker，五条 Prometheus 告警规则已加载，包含近期失败 Run 规则。仍需设置环境标签并确认多副本队列 Gauge 聚合口径；通知投递按用户决定短期暂缓。当前没有 Grafana、Alertmanager/告警接收端或外部集中监控后端。
 
 ## 工具与分层
 
@@ -210,7 +210,7 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 样例使用 Fake ModelClient、Fake/In-memory Store 和确定性工具，不读取真实 API Key，不访问真实模型。覆盖普通回答、模型可重试错误、工具调用预算、工具执行失败、任务 Deadline、取消、工具超时未知状态、PENDING 工具恢复、IN_PROGRESS 工具不重放，以及 JSON 文件存取和重启后恢复。断言检查最终状态/文本、工具类别和次数、步骤耗时/用量字段、是否恢复及失败类别。
 
-这些固定样例验证的是已知控制流程和边界行为；它们不能证明真实模型会正确选择工具、工具结果适合业务，也不能代表 Agent 整体回答质量、真实服务可用性或生产安全性。OTLP 导出默认关闭。连接 HTTP OTLP Collector 时，分别设置 `AGENT_OTLP_TRACES_ENABLED=true`、`AGENT_OTLP_METRICS_ENABLED=true`，并通过 `AGENT_OTLP_TRACES_ENDPOINT`（默认 `http://localhost:4318/v1/traces`）和 `AGENT_OTLP_METRICS_ENDPOINT`（默认 `http://localhost:4318/v1/metrics`）配置接收地址。L5 K3s 部署包含内部 Collector 与 Prometheus；Prometheus 提供 Agent 指标控制台，但目前没有 Grafana、外部集中后端或告警接收端。Testcontainers 的临时 Collector 回归验证与 L5 内部部署都不替代生产告警路由验收。
+这些固定样例验证的是已知控制流程和边界行为；它们不能证明真实模型会正确选择工具、工具结果适合业务，也不能代表 Agent 整体回答质量、真实服务可用性或生产安全性。OTLP 导出默认关闭。连接 HTTP OTLP Collector 时，分别设置 `AGENT_OTLP_TRACES_ENABLED=true`、`AGENT_OTLP_METRICS_ENABLED=true`，并通过 `AGENT_OTLP_TRACES_ENDPOINT`（默认 `http://localhost:4318/v1/traces`）和 `AGENT_OTLP_METRICS_ENDPOINT`（默认 `http://localhost:4318/v1/metrics`）配置接收地址。L5 K3s 部署包含内部 Collector 与 Prometheus；Prometheus 提供 Agent 指标控制台，但目前没有 Grafana 或外部集中后端；告警通知投递按用户决定短期暂缓。Testcontainers 的临时 Collector 回归验证与 L5 内部部署都不替代生产告警路由验收。
 
 ### 显式运行真实模型评测
 
