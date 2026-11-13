@@ -8,7 +8,9 @@
 
 **技术栈：** Java 21、Maven、Spring Boot、PostgreSQL、Flyway、Micrometer、OpenTelemetry、JUnit 5、Testcontainers；Fake/Mock 只用于测试。
 
-**进度记录（2026-11-12）：** 计划任务 1–6 的代码基线已落地：PostgreSQL/Flyway RunStore、父/子租约与 fencing、Spring Boot/CLI/Worker 入口、结构化日志及 Micrometer/OTel 埋点、Fake/Provider Stub/PostgreSQL 测试、容器/K3s 清单与 CI 初版。协作子任务支持独立数据库轮询 Worker；Run 级模型/工具预算有原子幂等预留；终态 Run 清理和 age 加密备份/隔离库恢复工具已实现。最近完整 Maven 验收 118 项通过、0 失败、0 错误、0 跳过；新增 PostgreSQL 独立存储实例接管父/子租约恢复测试，以及子任务 Worker 亚毫秒轮询周期拒绝测试，和 JSON Schema Draft 2020-12 嵌套、组合、本地引用和远程引用安全测试。应用镜像 Trivy 复扫为 0 个 HIGH/CRITICAL。仍未完成的企业交付包括：l5 部署和 Secret 管理/回滚演练（l5 非系统工作负载继续保持停止）、多进程/Pod 崩溃故障演练、工具端幂等/补偿/逐工具审计契约、备份保留与异地复制/密钥轮换及定期恢复演练、OTLP Collector 和告警接收端连通、远端 CI 实际门禁结果、真实模型评测与成本预算。HTTP API 与生产认证授权短期暂缓；Fake/Mock 仅在测试中使用。
+> **当前范围说明（2026-11-14）：** 本文下方进度是 2026-11-12 的历史快照，不代表当前代码状态。PostgreSQL 备份/恢复功能曾在该快照中实现，随后按用户决定已从源码、CI、部署和 L5 环境移除；它不属于当前交付项，也不得按本文旧记录重新加入。当前没有应用级数据库/Trace 备份或节点故障恢复能力，风险现状见 README 与 L5 运维手册。
+
+**进度记录（2026-11-12，历史快照）：** 计划任务 1–6 的代码基线已落地：PostgreSQL/Flyway RunStore、父/子租约与 fencing、Spring Boot/CLI/Worker 入口、结构化日志及 Micrometer/OTel 埋点、Fake/Provider Stub/PostgreSQL 测试、容器/K3s 清单与 CI 初版。协作子任务支持独立数据库轮询 Worker；Run 级模型/工具预算有原子幂等预留；当时实现过 age 加密备份/隔离库恢复工具，之后已按用户决定移除。最近完整 Maven 验收 118 项通过、0 失败、0 错误、0 跳过；新增 PostgreSQL 独立存储实例接管父/子租约恢复测试，以及子任务 Worker 亚毫秒轮询周期拒绝测试，和 JSON Schema Draft 2020-12 嵌套、组合、本地引用和远程引用安全测试。应用镜像 Trivy 复扫为 0 个 HIGH/CRITICAL。当时列出的备份保留、异地复制、密钥轮换和定期恢复演练均已从当前范围删除。HTTP API 与生产认证授权短期暂缓；Fake/Mock 仅在测试中使用。
 
 ---
 
@@ -64,7 +66,7 @@
 
 ## 任务 6：部署、CI 与评测
 
-1. 检查部署清单的探针、资源限制、非 root、安全上下文、secret 引用、Postgres 存储/备份和关闭优雅性；通过静态测试验证关键条件。
+1. 检查部署清单的探针、资源限制、非 root、安全上下文、secret 引用、Postgres 存储和关闭优雅性；通过静态测试验证关键条件。数据库备份/恢复明确不在当前支持范围。
 2. 构建 OCI 镜像；CI 构建/扫描并推送镜像，l5 由 containerd 拉取，不在 l5 假设 Docker/Compose。
 3. 保持 l5 非系统工作负载停止；复核 K3s/节点容量后，仅部署经用户目标确认的开发/集成栈，不宣称单节点 HA。
 4. 为固定评测记录完成状态、工具选择、调用次数、耗时、模型 token 可用性；确定性 CI 不调用真实 Provider，真实模型评测单独手动运行并设费用预算。
