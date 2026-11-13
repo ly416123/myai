@@ -31,6 +31,8 @@ jobs:
           bash -n ops/run-scheduled-backup.sh ops/postgres-backup.sh ops/postgres-restore.sh ops/prune-postgres-backups.sh ops/tests/postgres-backup-retention-test.sh ops/tests/postgres-backup-restore-test.sh ops/tests/postgres-backup-restore-smoke.sh
           bash ops/tests/postgres-backup-retention-test.sh
           bash ops/tests/postgres-backup-restore-test.sh
+      - name: Test Prometheus alert firing and threshold behavior
+        run: bash ops/tests/prometheus-alerts-test.sh
       - name: Build checksum-pinned age tools
         run: bash ops/fetch-age.sh
       - name: Build scheduled backup image

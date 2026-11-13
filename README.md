@@ -184,6 +184,8 @@ Worker 轮询时刷新四个 PostgreSQL 聚合 Gauge：`agent.worker.queue.depth
 
 Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 起步告警规则模板位于 `ops/monitoring/agent-alerts.yaml`，覆盖队列等待、过期租约、近 5 分钟失败 Run 和 Hikari 连接池；阈值是运维起点，不是业务 SLO。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称映射；L5 已部署长期运行的单副本 Collector/Prometheus 和双副本 Worker，五条 Prometheus 告警规则已加载，包含近期失败 Run 规则。仍需设置环境标签并确认多副本队列 Gauge 聚合口径；通知投递按用户决定短期暂缓。当前没有 Grafana、Alertmanager/告警接收端或外部集中监控后端。
 
+Prometheus 告警规则另有 `promtool` 确定性测试，检查四类告警的 `for` 延迟、触发注释和阈值边界。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
+
 ## 工具与分层
 
 - ModelClient：模型厂商适配边界；DeepSeek 实现负责协议映射、超时和模型错误分类。

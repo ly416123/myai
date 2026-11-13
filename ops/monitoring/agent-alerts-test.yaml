@@ -1,0 +1,92 @@
+# Unit tests for the same alert file mounted by the L5 Prometheus deployment.
+rule_files:
+  - agent-alerts.yaml
+
+evaluation_interval: 30s
+
+tests:
+  - name: alert state transitions
+    interval: 30s
+    input_series:
+      - series: myai_agent_worker_queue_oldest_seconds
+        values: "301+0x20"
+      - series: myai_agent_worker_lease_expired_leases
+        values: "1+0x20"
+      - series: myai_agent_worker_run_failed_recent_runs
+        values: "1+0x20"
+      - series: myai_hikaricp_connections_active
+        values: "10+0x20"
+      - series: myai_hikaricp_connections_max
+        values: "10+0x20"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: AgentWorkerQueueStalled
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentExpiredRunLeases
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentRecentRunFailures
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentDatabasePoolNearCapacity
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: AgentExpiredRunLeases
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: One or more Run leases have expired
+              description: Check worker restarts and Run recovery; do not manually replay side-effecting tools.
+      - eval_time: 2m
+        alertname: AgentRecentRunFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: One or more Runs failed within the last five minutes
+              description: Check the bounded Run failure categories and persisted Run records.
+      - eval_time: 5m
+        alertname: AgentWorkerQueueStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Agent queue has waited over five minutes
+              description: Check worker readiness, model availability, and database queue claims.
+      - eval_time: 5m
+        alertname: AgentDatabasePoolNearCapacity
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Agent database connection pool is near capacity
+              description: Review worker concurrency and database pool sizing.
+
+  - name: alert thresholds do not fire at boundary
+    interval: 30s
+    input_series:
+      - series: myai_agent_worker_queue_oldest_seconds
+        values: "300+0x20"
+      - series: myai_agent_worker_lease_expired_leases
+        values: "0+0x20"
+      - series: myai_agent_worker_run_failed_recent_runs
+        values: "0+0x20"
+      - series: myai_hikaricp_connections_active
+        values: "9+0x20"
+      - series: myai_hikaricp_connections_max
+        values: "10+0x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentWorkerQueueStalled
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentExpiredRunLeases
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentRecentRunFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentDatabasePoolNearCapacity
+        exp_alerts: []
