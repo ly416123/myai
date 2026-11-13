@@ -212,6 +212,7 @@ public final class AgentRuntime implements AutoCloseable {
         run.setLeaseOwner(lease.ownerId());
         run.setFencingToken(lease.fencingToken());
         Observation runObservation = telemetry.startRun(run, "single");
+        Observation.Scope runScope = runObservation.openScope();
         try {
             if (run.status() == RunStatus.CREATED) run.transitionTo(RunStatus.RUNNING, Instant.now(), null);
             else run.touch(Instant.now());
@@ -314,6 +315,7 @@ public final class AgentRuntime implements AutoCloseable {
                     terminalCategory, unexpected.getClass().getSimpleName());
             return run;
         } finally {
+            runScope.close();
             heartbeat.close();
             telemetry.finishRun(runObservation, run, "single");
             runLeases.remove(run.runId(), lease);
@@ -336,7 +338,7 @@ public final class AgentRuntime implements AutoCloseable {
             try {
                 ModelResponse response;
                 try (var scope = stepObservation.openScope()) {
-                    response = callModelUntilDeadline(run);
+                    response = callModelUntilDeadline(run, stepObservation);
                 }
                 checkCancelled(run);
                 Instant completedAt = Instant.now();
@@ -378,9 +380,13 @@ public final class AgentRuntime implements AutoCloseable {
         }
     }
 
-    private ModelResponse callModelUntilDeadline(RunRecord run) throws ModelClientException, WorkflowAbort {
-        FutureTask<ModelResponse> task = new FutureTask<>(
-                () -> modelClient.complete(run.messages(), registry.definitions()));
+    private ModelResponse callModelUntilDeadline(RunRecord run, Observation stepObservation)
+            throws ModelClientException, WorkflowAbort {
+        FutureTask<ModelResponse> task = new FutureTask<>(() -> {
+            try (var scope = stepObservation.openScope()) {
+                return modelClient.complete(run.messages(), registry.definitions());
+            }
+        });
         RunControl control = runControls.get(run.runId());
         control.setActiveModelTask(task);
         Thread.ofVirtual().name("agent-model-" + run.runId()).start(task);

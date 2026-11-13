@@ -5,6 +5,7 @@ import com.example.agent.model.Message;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
 import com.example.agent.model.ToolDefinition;
+import com.example.agent.observability.AgentTelemetry;
 import com.example.agent.tool.ToolExecutor;
 import com.example.agent.tool.ToolRegistry;
 import com.example.agent.tools.CalculatorTool;
@@ -26,6 +27,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.Observation;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -41,6 +46,37 @@ import static org.mockito.Mockito.spy;
  */
 class AgentRuntimeTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void propagatesRunAndModelStepObservationToModelClientThread() {
+        ToolRegistry registry = new ToolRegistry();
+        ObservationRegistry observations = ObservationRegistry.create();
+        observations.observationConfig().observationHandler(new ObservationHandler<>() {
+            @Override public boolean supportsContext(Observation.Context context) { return true; }
+        });
+        AtomicReference<String> activeObservation = new AtomicReference<>();
+        AtomicReference<String> parentObservation = new AtomicReference<>();
+        ModelClient model = (messages, tools) -> {
+            var current = observations.getCurrentObservation();
+            if (current != null) {
+                activeObservation.set(current.getContextView().getName());
+                var parent = current.getContextView().getParentObservation();
+                if (parent != null) parentObservation.set(parent.getContextView().getName());
+            }
+            return new ModelResponse("done", List.of());
+        };
+
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(1))) {
+            var telemetry = new AgentTelemetry(null, observations);
+            AgentRuntime runtime = new AgentRuntime(model, registry, executor,
+                    new InMemoryRunStore(), RuntimeConfig.defaults(2), telemetry);
+            assertEquals(com.example.agent.workflow.RunStatus.SUCCEEDED,
+                    runtime.runTracked("trace propagation").status());
+        }
+
+        assertEquals("agent.step", activeObservation.get());
+        assertEquals("agent.run", parentObservation.get());
+    }
 
     @Test
     void transientStoreReadFailureWhilePollingModelDoesNotAbortRun() throws Exception {

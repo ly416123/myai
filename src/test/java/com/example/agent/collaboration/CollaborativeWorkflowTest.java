@@ -4,6 +4,7 @@ import com.example.agent.client.ModelClient;
 import com.example.agent.client.ModelClientException;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
+import com.example.agent.observability.AgentTelemetry;
 import com.example.agent.runtime.AgentRuntime;
 import com.example.agent.tool.AgentTool;
 import com.example.agent.tool.ToolExecutor;
@@ -22,6 +23,9 @@ import com.example.agent.workflow.RunStoreUnavailableException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
 
 import java.time.Duration;
 import java.util.List;
@@ -30,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -39,6 +44,85 @@ import static org.mockito.Mockito.spy;
 
 class CollaborativeWorkflowTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void propagatesRunAndModelStepObservationsToCollaborativeModelClientThread() {
+        ToolRegistry tools = tools();
+        ObservationRegistry observations = ObservationRegistry.create();
+        observations.observationConfig().observationHandler(new ObservationHandler<>() {
+            @Override public boolean supportsContext(Observation.Context context) { return true; }
+        });
+        ConcurrentLinkedQueue<String> activeObservations = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<String> parentObservations = new ConcurrentLinkedQueue<>();
+        AtomicInteger calls = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            Observation current = observations.getCurrentObservation();
+            activeObservations.add(current == null ? "NONE" : current.getContextView().getName());
+            Observation parent = current == null ? null : (Observation) current.getContextView().getParentObservation();
+            parentObservations.add(parent == null ? "NONE" : parent.getContextView().getName());
+            if (calls.getAndIncrement() == 0)
+                return plan("{\"route\":\"NO_SPLIT\",\"tasks\":[],\"deliverables\":[]}");
+            return new ModelResponse("done", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, workers(), store,
+                    new CollaborationConfig(3, 1, 5, 2, 0, Duration.ofSeconds(3), Duration.ofSeconds(1)),
+                    JSON, new AgentTelemetry(null, observations));
+            assertEquals(RunStatus.SUCCEEDED, workflow.runTracked("trace propagation").status());
+        }
+
+        assertEquals(List.of("agent.step", "agent.step"), List.copyOf(activeObservations));
+        assertEquals(List.of("agent.run", "agent.run"), List.copyOf(parentObservations));
+    }
+
+    @Test
+    void nestsLocalWorkerAndModelObservationsUnderRunAndWorkerStep() {
+        ToolRegistry tools = tools();
+        ObservationRegistry observations = ObservationRegistry.create();
+        observations.observationConfig().observationHandler(new ObservationHandler<>() {
+            @Override public boolean supportsContext(Observation.Context context) { return true; }
+        });
+        AtomicReference<String> workerModelParentKind = new AtomicReference<>();
+        AtomicReference<String> workerParentObservation = new AtomicReference<>();
+        AtomicInteger calls = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) {
+                return plan("""
+                        {"route":"DELEGATE","tasks":[
+                          {"taskId":"t-number","workerId":"numbers","description":"calculate 6 times 7",
+                           "dependencies":[],"deliverableIds":["number"]}],
+                          "deliverables":[{"deliverableId":"number","description":"calculation"}]}
+                        """);
+            }
+            if (messages.getFirst().content().equals("numbers prompt")) {
+                Observation current = observations.getCurrentObservation();
+                var workerStep = current == null ? null : current.getContextView().getParentObservation();
+                if (workerStep != null) {
+                    var kind = workerStep.getContextView().getLowCardinalityKeyValue("step.kind");
+                    workerModelParentKind.set(kind == null ? "NONE" : kind.getValue());
+                    var run = workerStep.getContextView().getParentObservation();
+                    workerParentObservation.set(run == null ? "NONE" : run.getContextView().getName());
+                }
+                return new ModelResponse("42", List.of());
+            }
+            calls.incrementAndGet();
+            return new ModelResponse("The answer is 42.", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, workers(), store,
+                    new CollaborationConfig(5, 2, 10, 5, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)),
+                    JSON, new AgentTelemetry(null, observations));
+            RunRecord result = workflow.runTracked("calculate and explain");
+            assertEquals(RunStatus.SUCCEEDED, result.status(),
+                    () -> "failure=" + result.failureCategory() + " tasks=" + result.childTasks());
+        }
+
+        assertEquals("WORKER", workerModelParentKind.get());
+        assertEquals("agent.run", workerParentObservation.get());
+        assertEquals(1, calls.get());
+    }
 
     @Test
     void temporaryStoreReadFailureWhilePollingSupervisorModelDoesNotAbortRun() throws Exception {

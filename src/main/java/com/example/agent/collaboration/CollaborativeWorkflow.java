@@ -200,6 +200,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         run.setLeaseOwner(lease.ownerId());
         run.setFencingToken(lease.fencingToken());
         Observation runObservation = telemetry.startRun(run, "collaborative");
+        Observation.Scope runScope = runObservation.openScope();
         SharedRunBudget budget = new SharedRunBudget(run, config, store, lease);
         try {
             if (run.status() == RunStatus.CREATED) run.transitionTo(RunStatus.RUNNING, Instant.now(), null);
@@ -213,7 +214,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 return complete(run, control, RunStatus.SUCCEEDED, null);
             }
 
-            executeTasks(run, control, budget);
+            executeTasks(run, control, budget, runObservation);
             checkCancelled(run, control);
             checkDeadline(run);
             List<ChildTaskRecord> successful = run.childTasks().stream()
@@ -246,6 +247,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             settleUnfinishedTasks(run, FailureCategory.UNKNOWN);
             return complete(run, control, RunStatus.FAILED, FailureCategory.UNKNOWN);
         } finally {
+            runScope.close();
             heartbeat.close();
             ExecutorService executor = control.workerExecutor;
             if (executor != null) executor.shutdownNow();
@@ -315,7 +317,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         }
     }
 
-    private void executeTasks(RunRecord run, Control control, SharedRunBudget budget) throws WorkflowAbort {
+    private void executeTasks(RunRecord run, Control control, SharedRunBudget budget,
+                              Observation runObservation) throws WorkflowAbort {
         if (config.separateTaskWorkers()) {
             awaitSeparateWorkers(run, control);
             return;
@@ -347,8 +350,11 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                         Math.min(ready.size(), offset + config.maxParallelism()));
                 List<Future<?>> futures = new ArrayList<>();
                 for (ChildTaskRecord task : batch) {
-                    futures.add(executor.submit(() -> executeChildTask(run, task.taskId(), specs.get(task.taskId()),
-                            control, budget)));
+                    futures.add(executor.submit(() -> {
+                        try (var scope = runObservation.openScope()) {
+                            executeChildTask(run, task.taskId(), specs.get(task.taskId()), control, budget);
+                        }
+                    }));
                 }
                 for (Future<?> future : futures) awaitWorker(run, future, control);
                 refreshChildTaskProjection(run);
@@ -454,8 +460,10 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                     run.addStep(step);
                     return step.stepId();
                 });
+        Observation workerObservation = telemetry.startStep(run, run.step(workerStepId), "collaborative");
         ToolRegistry restricted = allTools.restrictedTo(worker.allowedTools());
-        try (ToolExecutor executor = new ToolExecutor(restricted, config.toolTimeout())) {
+        try (var workerScope = workerObservation.openScope();
+             ToolExecutor executor = new ToolExecutor(restricted, config.toolTimeout())) {
             String result = runAgentLoop(run, taskId, worker.workerId(), messages, restricted, executor,
                     worker.maxModelCalls(), worker.maxToolCalls(), control, budget);
             if (result == null || result.isBlank()) throw new ModelClientException(FailureCategory.WORKER_FAILED, false);
@@ -497,6 +505,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             run.replaceChildTask(taskId, current);
             finishWorkflowStep(run, workerStepId, RunStepStatus.FAILED, FailureCategory.WORKER_FAILED);
             persist(run);
+        } finally {
+            telemetry.finishStep(workerObservation, run.step(workerStepId), "collaborative");
         }
     }
 
@@ -605,7 +615,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             try {
                 ModelResponse response;
                 try (var scope = stepObservation.openScope()) {
-                    response = callModel(messages, tools, run, control);
+                    response = callModel(messages, tools, run, control, stepObservation);
                 }
                 checkCancelled(run, control);
                 run.replaceStep(stepId, run.step(stepId).finish(RunStepStatus.SUCCEEDED, Instant.now(), null,
@@ -645,8 +655,13 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     }
 
     private ModelResponse callModel(List<Message> messages, List<com.example.agent.model.ToolDefinition> tools,
-                                    RunRecord run, Control control) throws WorkflowAbort, ModelClientException {
-        FutureTask<ModelResponse> task = new FutureTask<>(() -> model.complete(List.copyOf(messages), tools));
+                                    RunRecord run, Control control, Observation stepObservation)
+            throws WorkflowAbort, ModelClientException {
+        FutureTask<ModelResponse> task = new FutureTask<>(() -> {
+            try (var scope = stepObservation.openScope()) {
+                return model.complete(List.copyOf(messages), tools);
+            }
+        });
         control.registerModelTask(task);
         Thread.ofVirtual().name("agent-model-" + run.runId()).start(task);
         try {
