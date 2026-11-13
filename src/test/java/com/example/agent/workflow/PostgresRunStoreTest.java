@@ -1,11 +1,19 @@
 package com.example.agent.workflow;
 
-import com.example.agent.model.Message;
+import com.example.agent.client.ModelClient;
 import com.example.agent.collaboration.ChildTaskRecord;
 import com.example.agent.collaboration.PlannedTask;
 import com.example.agent.collaboration.TaskPlan;
 import com.example.agent.collaboration.TaskStatus;
+import com.example.agent.model.Message;
+import com.example.agent.model.ModelResponse;
+import com.example.agent.model.ToolCall;
+import com.example.agent.runtime.AgentRuntime;
 import com.example.agent.test.PostgresTestContainerSupport;
+import com.example.agent.tool.AgentTool;
+import com.example.agent.tool.ToolExecutor;
+import com.example.agent.tool.ToolRegistry;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -18,6 +26,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -428,6 +438,63 @@ class PostgresRunStoreTest {
         assertEquals("recovered context", store.find(runId).orElseThrow().childTasks().getFirst()
                 .messages().getFirst().content());
         assertFalse(store.isChildTaskLeaseCurrent(firstChild, firstParent, recoveredAt));
+    }
+
+    @Test
+    void anotherRuntimeResumesPersistedUnknownToolOutcomeWithoutReplayingIt() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        String runId = "pg-runtime-crash-recovery-" + java.util.UUID.randomUUID();
+        Instant startedAt = Instant.now();
+        ToolCall call = new ToolCall("call-unknown", "counting",
+                mapper.createObjectNode().put("operation", "increment"));
+        RunRecord interrupted = RunRecord.create(runId, "continue after worker crash", Duration.ofHours(1));
+        interrupted.transitionTo(RunStatus.RUNNING, startedAt, null);
+        interrupted.addMessage(Message.user("continue after worker crash"));
+        interrupted.addMessage(Message.assistantToolCalls(List.of(call)));
+        interrupted.addStep(RunStep.toolPending("step-unknown", call.id(), call.name(), startedAt)
+                .start(startedAt.plusMillis(1)));
+        interrupted.setToolCalls(1);
+        store.save(interrupted);
+
+        Instant crashedWorkerClaimAt = startedAt.minusSeconds(30);
+        store.claim(runId, "crashed-process", crashedWorkerClaimAt, Duration.ofSeconds(5)).orElseThrow();
+
+        PostgresRunStore restartedProcessStore = new PostgresRunStore(new JdbcTemplate(new DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())), mapper);
+        AtomicInteger toolExecutions = new AtomicInteger();
+        List<Message> recoveredModelInput = new ArrayList<>();
+        ToolRegistry tools = new ToolRegistry();
+        tools.register(new AgentTool() {
+            @Override public String name() { return "counting"; }
+            @Override public String description() { return "counts tool executions in recovery tests"; }
+            @Override public JsonNode inputSchema() {
+                return mapper.createObjectNode().put("type", "object")
+                        .set("properties", mapper.createObjectNode().set("operation",
+                                mapper.createObjectNode().put("type", "string")));
+            }
+            @Override public JsonNode execute(JsonNode arguments) {
+                toolExecutions.incrementAndGet();
+                return mapper.createObjectNode().put("count", 1);
+            }
+        });
+        ModelClient model = (messages, definitions) -> {
+            recoveredModelInput.addAll(messages);
+            return new ModelResponse("任务已恢复，工具执行结果未知，因此没有重放。", List.of());
+        };
+
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            AgentRuntime restartedRuntime = new AgentRuntime(model, tools, executor, restartedProcessStore,
+                    new RuntimeConfig(5, 3, 0, Duration.ofMinutes(2)));
+            RunRecord recovered = restartedRuntime.resume(runId);
+
+            assertEquals(RunStatus.SUCCEEDED, recovered.status());
+            assertTrue(recovered.resumed());
+            assertEquals(0, toolExecutions.get(), "an in-progress tool has an unknown outcome and must not replay");
+            assertEquals(RunStepStatus.INDETERMINATE,
+                    restartedProcessStore.find(runId).orElseThrow().step("step-unknown").status());
+            assertTrue(recoveredModelInput.stream().anyMatch(message -> message.role() == Message.Role.TOOL
+                    && message.content().contains("not replayed")));
+        }
     }
 
     @Test
