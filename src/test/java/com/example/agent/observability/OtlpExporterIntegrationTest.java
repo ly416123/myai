@@ -1,5 +1,6 @@
 package com.example.agent.observability;
 
+import com.example.agent.test.PostgresTestContainerSupport;
 import com.example.agent.workflow.RunQueueSnapshot;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -59,10 +60,12 @@ class OtlpExporterIntegrationTest {
             "myai_agent_worker_run_failed_recent_runs",
             "myai_hikaricp_connections_active",
             "myai_hikaricp_connections_max");
-    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("max", "sum", "up");
+    private static final Set<String> EXTERNAL_ALERT_METRICS = Set.of(
+            "kube_cronjob_status_last_successful_time");
+    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "max", "or", "sum", "time", "up");
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
 
     @Container
     private static final GenericContainer<?> COLLECTOR = new GenericContainer<>(
@@ -138,9 +141,13 @@ class OtlpExporterIntegrationTest {
         }
         var unexpectedTokens = new HashSet<>(expressionTokens);
         unexpectedTokens.removeAll(EXPECTED_ALERT_METRICS);
+        unexpectedTokens.removeAll(EXTERNAL_ALERT_METRICS);
         assertTrue(!expressionTokens.isEmpty(), "alert rules should contain metric expressions");
         assertTrue(expressionTokens.containsAll(EXPECTED_ALERT_METRICS),
                 () -> "Alert expressions do not reference all expected metrics: " + EXPECTED_ALERT_METRICS);
+        assertTrue(expressionTokens.containsAll(EXTERNAL_ALERT_METRICS),
+                () -> "Alert expressions do not reference all expected external metrics: "
+                        + EXTERNAL_ALERT_METRICS);
         unexpectedTokens.removeAll(SUPPORTED_PROMQL_SYMBOLS);
         assertTrue(unexpectedTokens.isEmpty(),
                 () -> "Update the alert metric contract when PromQL functions or identifiers change: " + unexpectedTokens);

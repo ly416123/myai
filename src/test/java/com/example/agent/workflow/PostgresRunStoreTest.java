@@ -5,6 +5,7 @@ import com.example.agent.collaboration.ChildTaskRecord;
 import com.example.agent.collaboration.PlannedTask;
 import com.example.agent.collaboration.TaskPlan;
 import com.example.agent.collaboration.TaskStatus;
+import com.example.agent.test.PostgresTestContainerSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -26,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Testcontainers(disabledWithoutDocker = true)
 class PostgresRunStoreTest {
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
     private static JdbcTemplate jdbc;
     private static PostgresRunStore store;
 

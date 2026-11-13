@@ -2,6 +2,7 @@ package com.example.agent;
 
 import com.example.agent.workflow.PostgresRunStore;
 import com.example.agent.workflow.RunStore;
+import com.example.agent.test.PostgresTestContainerSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
         "agent.worker-poll-interval=10s"})
 class AgentApplicationContextTest {
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
 
     @Autowired
     private RunStore runStore;
