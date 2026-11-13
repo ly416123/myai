@@ -147,13 +147,28 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 检查最近备份 Job：
 
 ```bash
-kubectl --context "$CTX" -n "$NS" get cronjob myai-postgres-backup
+kubectl --context "$CTX" -n "$NS" get cronjob myai-postgres-backup -o json | jq -r '[
+  .spec.schedule,
+  .spec.timeZone,
+  (.spec.suspend | tostring),
+  (.status.lastScheduleTime // "-"),
+  (.status.lastSuccessfulTime // "-")
+] | @tsv'
 kubectl --context "$CTX" -n "$NS" get jobs \
-  -l app.kubernetes.io/component=backup --sort-by=.metadata.creationTimestamp
+  -l app.kubernetes.io/component=backup -o json | jq -r '
+    .items[]
+    | select(any(.metadata.ownerReferences[]?;
+        .kind == "CronJob" and .name == "myai-postgres-backup"))
+    | [
+        .metadata.name,
+        .metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"] // "-",
+        ((.status.succeeded // 0) | tostring),
+        ((.status.failed // 0) | tostring)
+      ] | @tsv'
 kubectl --context "$CTX" -n "$NS" logs job/<已完成的备份Job名>
 ```
 
-正常 Job 应为 `Complete`，日志应显示加密归档生成及保留清理结果。备份脚本会在 `pg_dump` 前等待 PostgreSQL 可达，默认最多 60 秒；若 Job 失败，先看事件/日志和 PostgreSQL Service Endpoint/PVC 状态，确认是否为连接尚未就绪，再按已授权的运维流程处理。不要并行启动第二个手工备份 Job，也不要手工删除归档。2026-11-13 曾通过临时调度验证 CronJob 控制器路径，生成的 Job 完成且归档校验通过；CronJob 已恢复每日 02:00，仍需观察下一自然调度周期。CronJob 的 `Forbid` 不约束通过 `kubectl create job --from=cronjob/...` 手工创建的 Job。
+正常 Job 应为 `Complete`，日志应显示加密归档生成及保留清理结果。自然调度验收还需确认 CronJob 为 `suspend=false`、计划保持 `0 2 * * *` / `Asia/Shanghai`，`lastScheduleTime` 对应预期日期的 02:00；Job 的 ownerReference 指向此 CronJob，注解 `batch.kubernetes.io/cronjob-scheduled-timestamp` 与该计划时刻一致，且 `lastSuccessfulTime` 已更新。仅看到手工创建的 Job 完成不能证明定时路径。备份脚本会在 `pg_dump` 前等待 PostgreSQL 可达，默认最多 60 秒；若 Job 失败，先看事件/日志和 PostgreSQL Service Endpoint/PVC 状态，确认是否为连接尚未就绪，再按已授权的运维流程处理。不要并行启动第二个手工备份 Job，也不要手工删除归档。2026-11-13 曾通过临时调度验证 CronJob 控制器路径，生成的 Job 完成且归档校验通过；CronJob 已恢复每日 02:00，仍需观察下一自然调度周期。CronJob 的 `Forbid` 不约束通过 `kubectl create job --from=cronjob/...` 手工创建的 Job。
 
 恢复脚本会清理目标数据库现有对象，并要求校验备份 SHA-256、提供 age 身份文件、显式确认数据库名和破坏性操作开关。优先恢复到**隔离的新数据库**，核验 schema 与业务数据后再决定是否切换。具体环境变量和命令见 [README 备份与恢复说明](../../README.md#postgresql-加密备份与恢复)。不要在没有事件授权、目标确认及有效恢复密钥的情况下对 L5 主库运行恢复脚本。备份密钥故障域/组织托管及异地备份目前按项目决策暂缓；同节点 PVC 不能恢复整台节点丢失后的数据。
 
