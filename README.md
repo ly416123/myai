@@ -49,6 +49,8 @@ L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数
 
 ### 容器与 K3s Worker/Job
 
+第三方镜像 digest 由 `bash ops/tests/image-digests-test.sh` 对照 Registry manifest index 校验，并纳入 CI。当前源码已修正此前不可从 Registry 解析的 L5 本地 digest；L5 Pod 仍运行已缓存的旧引用，节点直接拉取 Docker Hub 超时，导入正确镜像并完成滚动更新前不要把本地 overlay 应用到 L5。
+
 仓库提供非 root、只读根文件系统兼容的运行时镜像文件。先由 Maven 打包，再构建镜像：
 
     mvn -DskipTests package

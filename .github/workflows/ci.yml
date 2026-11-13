@@ -44,6 +44,8 @@ jobs:
           git --redact --no-banner /repo
       - name: Test Prometheus alert firing and threshold behavior
         run: bash ops/tests/prometheus-alerts-test.sh
+      - name: Verify third-party image pins against registry manifests
+        run: bash ops/tests/image-digests-test.sh
       - name: Build runtime image
         run: docker build --tag myai-agent:${{ github.sha }} .
       - name: Build model egress proxy image

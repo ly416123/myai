@@ -34,11 +34,11 @@ class ContainerDeploymentContractTest {
         String tempo = Files.readString(Path.of("deploy/k8s/base/tempo.yaml"));
         String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
 
-        assertTrue(postgres.contains("image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"));
-        assertTrue(foundation.contains("image: otel/opentelemetry-collector-contrib:0.165.0@sha256:bda8c1d727effc2f937d2a3470ea3f9ee189b8dd96d2385a2475b0b6f16ec3f8"));
-        assertTrue(foundation.contains("image: prom/prometheus:v3.16.0@sha256:89c1a644817e9ad70fa2af76c84898e327c1de7063735f962e8313b1e28672c3"));
-        assertTrue(tempo.contains("image: grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea"));
-        assertTrue(grafana.contains("image: grafana/grafana:12.4.15@sha256:1b9f34ccb7441bb254a70f25fb98f0e1f0b5c7a043191b2b678f6b77fc108ef2"));
+        assertTrue(postgres.contains("image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"));
+        assertTrue(foundation.contains("image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea"));
+        assertTrue(foundation.contains("image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06"));
+        assertTrue(tempo.contains("image: grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38"));
+        assertTrue(grafana.contains("image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e"));
     }
 
     @Test
@@ -174,7 +174,7 @@ class ContainerDeploymentContractTest {
 
         assertTrue(kustomization.contains("base/tempo.yaml"));
         assertTrue(kustomization.contains("base/grafana.yaml"));
-        assertTrue(tempo.contains("grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea"));
+        assertTrue(tempo.contains("grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38"));
         assertTrue(tempo.contains("--target=all"));
         assertTrue(tempo.contains("type: Recreate"));
         assertTrue(tempoConfig.contains("backend: local"));
@@ -188,7 +188,7 @@ class ContainerDeploymentContractTest {
         assertTrue(tempo.contains("name: myai-tempo-data"));
         assertTrue(tempo.contains("storage: 10Gi"));
         assertTrue(tempo.contains("type: ClusterIP"));
-        assertTrue(grafana.contains("grafana/grafana:12.4.15@sha256:1b9f34ccb7441bb254a70f25fb98f0e1f0b5c7a043191b2b678f6b77fc108ef2"));
+        assertTrue(grafana.contains("grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e"));
         assertTrue(grafana.contains("type: Recreate"));
         assertTrue(grafana.contains("name: GF_AUTH_ANONYMOUS_ENABLED"));
         assertTrue(grafana.contains("value: \"false\""));

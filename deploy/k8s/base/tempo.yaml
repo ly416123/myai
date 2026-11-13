@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tempo
-          image: grafana/tempo:2.10.10@sha256:fd71674e2fd386e859b54fd90f24b37d1aaf2554d2f1e488a05fd134f3d310ea
+          image: grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38
           imagePullPolicy: IfNotPresent
           args: [--target=all, --config.file=/etc/tempo/config.yaml]
           ports:
