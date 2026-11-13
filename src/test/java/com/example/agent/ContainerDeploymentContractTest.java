@@ -150,6 +150,9 @@ class ContainerDeploymentContractTest {
     @Test
     void traceStorageIsPersistentPrivateAndQueryableThroughGrafana() throws Exception {
         String tempo = Files.readString(Path.of("deploy/k8s/base/tempo.yaml"));
+        Path tempoConfigPath = Path.of("deploy/k8s/base/tempo-config.yaml");
+        assertTrue(Files.exists(tempoConfigPath), "Tempo config must be maintained as a separate file");
+        String tempoConfig = Files.readString(tempoConfigPath);
         String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
         String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
         String networkPolicies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
@@ -161,8 +164,14 @@ class ContainerDeploymentContractTest {
         assertTrue(tempo.contains("linux/amd64 manifest sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867"));
         assertTrue(tempo.contains("--target=all"));
         assertTrue(tempo.contains("type: Recreate"));
-        assertTrue(tempo.contains("backend: local"));
-        assertTrue(tempo.contains("block_retention: 168h"));
+        assertTrue(tempoConfig.contains("backend: local"));
+        assertTrue(tempo.contains("configMap:\n            name: myai-tempo"));
+        assertTrue(tempoConfig.contains("query_frontend:\n  search:\n    max_result_limit: 262144"),
+                "Tempo must explicitly cap search result limits to mitigate CVE-2026-21728");
+        assertTrue(tempoConfig.contains("block_retention: 168h"));
+        assertTrue(kustomization.contains("namespace: myai"));
+        assertTrue(kustomization.contains("- name: myai-tempo\n    files:\n      - config.yaml=base/tempo-config.yaml"),
+                "Tempo config changes must generate a new ConfigMap name to trigger a rollout");
         assertTrue(tempo.contains("name: myai-tempo-data"));
         assertTrue(tempo.contains("storage: 10Gi"));
         assertTrue(tempo.contains("type: ClusterIP"));
