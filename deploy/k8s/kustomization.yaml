@@ -3,6 +3,8 @@ kind: Kustomization
 resources:
   - base/agent-worker-deployment.yaml
   - base/l5-foundation.yaml
+  - base/tempo.yaml
+  - base/grafana.yaml
   - base/prometheus-console.yaml
   - base/l5-postgres.yaml
   - base/network-policies.yaml
@@ -11,3 +13,9 @@ configMapGenerator:
   - name: myai-prometheus-rules
     files:
       - alerts.yml=base/agent-alerts.yaml
+  - name: myai-grafana-dashboard-provider
+    files:
+      - dashboards.yaml=base/grafana/dashboards.yaml
+  - name: myai-grafana-dashboard-config
+    files:
+      - myai-runtime-overview.json=base/grafana/myai-runtime-overview.json

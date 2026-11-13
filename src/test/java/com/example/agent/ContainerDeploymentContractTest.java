@@ -1,5 +1,7 @@
 package com.example.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -119,6 +121,87 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
+    void traceStorageIsPersistentPrivateAndQueryableThroughGrafana() throws Exception {
+        String tempo = Files.readString(Path.of("deploy/k8s/base/tempo.yaml"));
+        String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
+        String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
+        String networkPolicies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
+        String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
+
+        assertTrue(kustomization.contains("base/tempo.yaml"));
+        assertTrue(kustomization.contains("base/grafana.yaml"));
+        assertTrue(tempo.contains("grafana/tempo:2.10.10"));
+        assertTrue(tempo.contains("linux/amd64 manifest sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867"));
+        assertTrue(tempo.contains("--target=all"));
+        assertTrue(tempo.contains("type: Recreate"));
+        assertTrue(tempo.contains("backend: local"));
+        assertTrue(tempo.contains("block_retention: 168h"));
+        assertTrue(tempo.contains("name: myai-tempo-data"));
+        assertTrue(tempo.contains("storage: 10Gi"));
+        assertTrue(tempo.contains("type: ClusterIP"));
+        assertTrue(grafana.contains("grafana/grafana:12.4.15"));
+        assertTrue(grafana.contains("linux/amd64 manifest sha256:e8e2751f6d838529b13c5f876791404d0e2c35171f9638ee3ae56835e34226a9"));
+        assertTrue(grafana.contains("type: Recreate"));
+        assertTrue(grafana.contains("name: GF_AUTH_ANONYMOUS_ENABLED"));
+        assertTrue(grafana.contains("value: \"false\""));
+        assertTrue(grafana.contains("name: GF_PLUGINS_PREINSTALL_DISABLED"));
+        assertTrue(grafana.contains("name: GF_PLUGINS_CHECK_FOR_PLUGIN_UPDATES"));
+        assertTrue(grafana.contains("name: GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED"));
+        assertTrue(grafana.contains("secretName: myai-grafana-admin"));
+        assertTrue(grafana.contains("url: http://myai-tempo:3200"));
+        assertFalse(grafana.contains("kind: Secret"), "Credentials must not be committed with deployment manifests");
+        assertTrue(foundation.contains("otlphttp/tempo"));
+        assertTrue(foundation.contains("endpoint: http://myai-tempo:4318"));
+        assertTrue(foundation.contains("max_elapsed_time: 1h"));
+        assertTrue(foundation.contains("key: deployment.environment.name"));
+        assertTrue(foundation.contains("value: l5"));
+        assertTrue(foundation.contains("processors: [memory_limiter, resource/l5, batch]"));
+        assertTrue(foundation.split("environment: l5", -1).length - 1 == 2);
+        assertTrue(foundation.contains("exporters: [otlphttp/tempo]"));
+        assertFalse(foundation.contains("exporters: [debug]"));
+        assertTrue(networkPolicies.contains("myai-tempo-ingress"));
+        assertTrue(networkPolicies.contains("myai-grafana-egress"));
+    }
+
+    @Test
+    void grafanaProvisionsPrometheusBackedAgentRuntimeDashboard() throws Exception {
+        String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
+        String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
+        String networkPolicies = Files.readString(Path.of("deploy/k8s/base/network-policies.yaml"));
+        String dashboard = Files.readString(Path.of("deploy/k8s/base/grafana/myai-runtime-overview.json"));
+        JsonNode root = new ObjectMapper().readTree(dashboard);
+
+        assertTrue(kustomization.contains("base/grafana/dashboards.yaml"));
+        assertTrue(kustomization.contains("base/grafana/myai-runtime-overview.json"));
+        assertTrue(grafana.contains("myai-grafana-dashboard-provider"));
+        assertTrue(grafana.contains("myai-grafana-dashboard-config"));
+        assertTrue(grafana.contains("myai-prometheus"));
+        int policyStart = networkPolicies.indexOf("name: myai-grafana-egress");
+        int policyEnd = networkPolicies.indexOf("\n---", policyStart);
+        String grafanaEgressPolicy = networkPolicies.substring(policyStart, policyEnd);
+        assertTrue(grafanaEgressPolicy.contains("app.kubernetes.io/name: myai-prometheus"));
+        assertTrue(grafanaEgressPolicy.contains("port: 9090"));
+        int prometheusIngressStart = networkPolicies.indexOf("name: myai-prometheus-ingress");
+        int prometheusIngressEnd = networkPolicies.indexOf("\n---", prometheusIngressStart);
+        String prometheusIngressPolicy = networkPolicies.substring(prometheusIngressStart, prometheusIngressEnd);
+        assertTrue(prometheusIngressPolicy.contains("app.kubernetes.io/name: myai-grafana"));
+        assertTrue(prometheusIngressPolicy.contains("port: 9090"));
+        assertTrue(root.path("uid").asText().equals("myai-runtime-overview"));
+        assertTrue(root.path("panels").size() >= 7);
+
+        String dashboardJson = root.toString();
+        assertTrue(dashboardJson.contains("myai_agent_worker_queue_depth_runs"));
+        assertTrue(dashboardJson.contains("myai_agent_worker_queue_oldest_seconds"));
+        assertTrue(dashboardJson.contains("myai_agent_worker_lease_expired_leases"));
+        assertTrue(dashboardJson.contains("myai_agent_worker_run_failed_recent_runs"));
+        assertTrue(dashboardJson.contains("myai_hikaricp_connections_active"));
+        assertTrue(dashboardJson.contains("myai-tempo"));
+        for (JsonNode panel : root.path("panels")) {
+            assertTrue(panel.path("targets").get(0).path("expr").asText().contains("environment=\"l5\""));
+        }
+    }
+
+    @Test
     void prometheusDeploymentAndRuleTestsShareTheSameCompleteAlertFile() throws Exception {
         String kustomization = Files.readString(Path.of("deploy/k8s/kustomization.yaml"));
         String foundation = Files.readString(Path.of("deploy/k8s/base/l5-foundation.yaml"));
@@ -133,6 +216,8 @@ class ContainerDeploymentContractTest {
         assertFalse(foundation.contains("alerts.yml: |"));
         assertTrue(ruleTests.contains("agent-alerts.yaml"));
         assertTrue(rules.contains("MyAiCollectorTargetDown"));
+        assertTrue(rules.contains("MyAiTempoTargetDown"));
+        assertTrue(rules.contains("up{job=\"myai-tempo\"} == 0"));
         assertTrue(rules.contains("AgentWorkerQueueStalled"));
         assertTrue(rules.contains("AgentExpiredRunLeases"));
         assertTrue(rules.contains("AgentRecentRunFailures"));

@@ -10,6 +10,15 @@ groups:
         annotations:
           summary: MyAI telemetry collector metrics endpoint is unavailable
 
+      - alert: MyAiTempoTargetDown
+        expr: up{job="myai-tempo"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: MyAI Tempo trace query backend is unavailable
+          description: Check the Tempo pod, service endpoint, and local trace storage.
+
       - alert: AgentWorkerQueueStalled
         expr: max(myai_agent_worker_queue_oldest_seconds) > 300
         for: 5m

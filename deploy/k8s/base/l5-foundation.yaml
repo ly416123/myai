@@ -16,6 +16,11 @@ data:
       memory_limiter:
         check_interval: 1s
         limit_mib: 128
+      resource/l5:
+        attributes:
+          - key: deployment.environment.name
+            value: l5
+            action: upsert
       batch:
         timeout: 5s
         send_batch_size: 1024
@@ -27,11 +32,27 @@ data:
         metric_expiration: 5m
       debug:
         verbosity: basic
+      otlphttp/tempo:
+        endpoint: http://myai-tempo:4318
+        timeout: 5s
+        sending_queue:
+          enabled: true
+          storage: file_storage/tempo
+          queue_size: 256
+        retry_on_failure:
+          enabled: true
+          initial_interval: 1s
+          max_interval: 30s
+          max_elapsed_time: 1h
     extensions:
       health_check:
         endpoint: 0.0.0.0:13133
+      file_storage/tempo:
+        directory: /var/lib/otelcol/tempo-queue
+        create_directory: true
+        fsync: true
     service:
-      extensions: [health_check]
+      extensions: [health_check, file_storage/tempo]
       pipelines:
         metrics:
           receivers: [otlp]
@@ -39,8 +60,20 @@ data:
           exporters: [prometheus, debug]
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [debug]
+          processors: [memory_limiter, resource/l5, batch]
+          exporters: [otlphttp/tempo]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: myai-otel-collector-queue
+  namespace: myai
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -48,6 +81,8 @@ metadata:
   name: myai-otel-collector
   namespace: myai
 spec:
+  strategy:
+    type: Recreate
   replicas: 1
   selector:
     matchLabels:
@@ -91,6 +126,7 @@ spec:
           volumeMounts:
             - {name: config, mountPath: /etc/otelcol-contrib, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            - {name: queue, mountPath: /var/lib/otelcol}
       volumes:
         - name: config
           configMap:
@@ -98,6 +134,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        - name: queue
+          persistentVolumeClaim:
+            claimName: myai-otel-collector-queue
 ---
 apiVersion: v1
 kind: Service
@@ -128,6 +167,13 @@ data:
       - job_name: myai-otel-collector
         static_configs:
           - targets: [myai-otel-collector:9464]
+            labels:
+              environment: l5
+      - job_name: myai-tempo
+        static_configs:
+          - targets: [myai-tempo:3200]
+            labels:
+              environment: l5
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

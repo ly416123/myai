@@ -60,6 +60,105 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: myai-collector-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: myai-otel-collector
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-tempo
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: myai-tempo-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: myai-tempo
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-grafana
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-prometheus
+      ports:
+        - protocol: TCP
+          port: 3200
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: myai-grafana-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: myai-grafana
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-tempo
+      ports:
+        - protocol: TCP
+          port: 3200
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: myai-prometheus-ingress
 spec:
   podSelector:
@@ -71,6 +170,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: myai-otel-collector
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-grafana
       ports:
         - protocol: TCP
           port: 9090
@@ -174,6 +276,13 @@ spec:
       ports:
         - protocol: TCP
           port: 9464
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: myai-tempo
+      ports:
+        - protocol: TCP
+          port: 3200
     - to:
         - namespaceSelector:
             matchLabels:

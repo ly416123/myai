@@ -4,14 +4,23 @@
 
 ## 当前运行边界
 
-最近核对时间：2026-11-13。
+最近核对时间：2026-11-14。
 
 - 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261113-jdbc-trace`；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus 各 1 副本。
-- Worker 已向 OTel Collector 发送 Trace。Collector 目前使用 `debug` exporter 的 `basic` 模式，只在日志中输出批次摘要，不提供持久保存或按 Trace ID 查询；当前没有 Tempo、Grafana 或外部 Trace 后端。
+- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261113-jdbc-trace`；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、Tempo、Grafana 各 1 副本。
+- Worker 通过 OTel Collector 将 Trace 写入 Tempo，Grafana 提供内部查询入口。2026-11-14 验收时 Tempo/Grafana 均 1/1 Ready；合成 Trace 从 Collector OTLP HTTP 接收（200）到 Tempo Trace ID 查询（200），Grafana Tempo 数据源健康检查为 `OK`。同日受控故障演练中，Tempo 暂停期间 Collector 接受一条合成 Trace；Collector 随后在 Tempo 仍暂停时重启，Tempo 恢复后 Trace ID 查询返回 1 个 span。此结果只证明该次进程重启和短暂后端不可用场景下的队列恢复，不证明节点/磁盘故障恢复或零丢失。Trace resource 标记 `deployment.environment.name=l5`；Prometheus 对 Collector 和 Tempo 的活动抓取目标带 `environment=l5`。Tempo 使用单副本、10 GiB `local-path` PVC、保留 7 天；Grafana 使用临时本地数据目录，仪表盘/用户状态在 Pod 重建后不保证保留。Collector 文件发送队列为 1 GiB，本地持久化，单批发送重试窗口最长 1 小时。首次部署期间超过原 5 分钟重试窗口的少量 Trace 已被 Collector 丢弃，无法恢复。PVC 不能承受 L5 单节点/磁盘损坏；没有备份或异地恢复。Grafana/Tempo 仅为 ClusterIP，不对集群外开放；Grafana 匿名访问关闭。
 - PostgreSQL 16 使用 5 GiB `local-path` PVC。当前没有数据库备份与恢复流程；卷或节点损坏可能导致 Run 与检查点丢失。CA 签名私钥托管尚未建设。
 - Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
+- 2026-11-14 使用 Trivy v0.76.1 对当前镜像重新扫描（`--severity HIGH,CRITICAL --ignore-unfixed`）：Tempo 2.10.10 与 Grafana 12.4.15 各报告 2 个可修复 HIGH、无 CRITICAL。Tempo 是 CVE-2026-116587（go-jose 4.1.4，修复版本 4.1.6）和 CVE-2026-78661（x/net 0.60.0，修复版本 0.62.0）；Grafana bundled Tempo datasource 插件是 CVE-2026-21728 与 CVE-2026-28377。比较扫描上游 Tempo 3.0.5 后仍有相同两项 HIGH；Grafana 13.3.1 有 20 个 HIGH（其中包括上述 Tempo 插件问题），因此没有仅为版本号升级 L5。当前镜像仍有未修复风险；NetworkPolicy、Grafana 登录和禁用插件预装/自动更新是暴露面限制，不等于漏洞修复或生产安全验收。生产使用前需要选取经过扫描并确认相关依赖已修复的镜像，或由风险责任人明确接受剩余风险。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
+
+Grafana ClusterIP 内部提供 MyAI Runtime Overview 仪表盘（uid `myai-runtime-overview`），显示可恢复 Run 队列、最老等待、过期租约、近 5 分钟失败 Run、数据库连接池使用率、Collector 和 Tempo 可用性（共 7 个面板）。只读查看方式：
+
+```bash
+kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-grafana 3000:3000
+```
+
+浏览器打开 `http://localhost:3000/d/myai-runtime-overview/myai-runtime-overview`，使用 Grafana 管理员 Secret 中的账户登录。仪表盘由 Git 管理的 Grafana provisioning 文件加载；不要在 UI 中编辑以免产生易失配置。该仪表盘和 Prometheus 数据只用于 L5 集成观察，未定义为业务 SLO，也没有告警通知接收端。
 - L5 Prometheus 保留告警规则和本地状态，但没有 Alertmanager 或通知接收端。告警阈值是运维默认值，不是已批准的业务 SLO。
 
 ## 1. 建立只读检查上下文
@@ -71,7 +80,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前 5 条规则覆盖 Collector 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 6 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟，以及数据库连接池使用率超过 90% 并持续 5 分钟。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
@@ -107,14 +116,28 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
 
 1. 检查对应 Pod、事件、日志与 Prometheus Targets API；Prometheus 是单副本，升级/重启期间本地查询可能短暂不可用。
 2. 规则健康与告警状态可通过上节 Prometheus API 只读查看。当前没有通知接收端，Pending/Firing 状态需要人工查看。
-3. 只读检查 Trace 信号是否到达 Collector：
+3. 只读检查 Collector、Tempo 与 Grafana 状态；只有后两者 Ready 后再查询 Trace：
 
    ```bash
-   kubectl --context "$CTX" -n "$NS" logs deploy/myai-otel-collector --since=1h \
-     | grep -F 'otelcol.signal' | grep -F 'traces' | tail
+   kubectl --context "$CTX" -n "$NS" get deploy myai-otel-collector myai-tempo myai-grafana
+   kubectl --context "$CTX" -n "$NS" get pvc myai-tempo-data myai-otel-collector-queue
    ```
 
-   `debug` exporter 的 `basic` 模式只显示收到的 span 批次数量，不包含可查询的 Trace 详情。若没有匹配日志，检查 Worker 的 OTLP Trace 配置、Pod 日志和 Collector 状态；不要据此重放 Run。
+   后端 Ready 后，本地转发 Grafana：
+
+   ```bash
+   kubectl --context "$CTX" -n "$NS" port-forward svc/myai-grafana 3000:3000
+   ```
+
+   打开 `http://localhost:3000`，用户名为 `admin`。管理员密码保存在集群 Secret `myai-grafana-admin` 中，可在受控终端读取：
+
+   ```bash
+   kubectl --context "$CTX" -n "$NS" get secret myai-grafana-admin \
+     -o jsonpath='{.data.admin-password}' | base64 --decode
+   printf '\n'
+   ```
+
+   不要将密码写入仓库、命令历史或聊天。Grafana Explore 中选择 `MyAI Tempo` 数据源查询 Trace。若镜像仍无法拉取，先检查节点到镜像仓库的访问与容器运行时 registry 配置；在 Tempo Ready 前 Trace 只在 Collector 队列中等待，不要据此重放 Run。
 4. 监控故障不应通过修改 Run 状态、租约或工具审计记录来处理。
 
 ## 5. Worker 版本回滚
@@ -160,5 +183,5 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
   export TESTCONTAINERS_RYUK_DISABLED=true
   mvn --batch-mode --no-transfer-progress clean verify
   ```
-- 当前 L5 单节点和同节点 PVC 不提供节点故障恢复目标；RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
+- Tempo Trace 保留期限当前为 7 天，使用同节点本地 PVC；Collector 磁盘队列及 Tempo 查询链路已完成一次合成数据验收。数据库与 Trace 均无备份能力；节点或磁盘故障可造成不可恢复的数据丢失。RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
 - 当前不提供 PostgreSQL 备份/恢复能力。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。

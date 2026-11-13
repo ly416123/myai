@@ -1,0 +1,89 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "max(myai_agent_worker_queue_depth_runs{environment=\"l5\"})", "legendFormat": "Pending Runs", "refId": "A"}],
+      "title": "Queued Runs",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "max(myai_agent_worker_queue_oldest_seconds{environment=\"l5\"})", "legendFormat": "Oldest wait", "refId": "A"}],
+      "title": "Oldest Queue Wait",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "max(myai_agent_worker_lease_expired_leases{environment=\"l5\"})", "legendFormat": "Expired leases", "refId": "A"}],
+      "title": "Expired Run Leases",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "max(myai_agent_worker_run_failed_recent_runs{environment=\"l5\"})", "legendFormat": "Failed Runs", "refId": "A"}],
+      "title": "Failed Runs (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [{"editorMode": "code", "expr": "100 * sum(myai_hikaricp_connections_active{environment=\"l5\"}) / clamp_min(sum(myai_hikaricp_connections_max{environment=\"l5\"}), 1)", "legendFormat": "Active pool usage", "refId": "A"}],
+      "title": "Database Connection Pool Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 5},
+      "id": 6,
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "min(up{job=\"myai-otel-collector\",environment=\"l5\"})", "legendFormat": "Collector up", "refId": "A"}],
+      "title": "Telemetry Collector Health",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "myai-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 5},
+      "id": 7,
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"editorMode": "code", "expr": "min(up{job=\"myai-tempo\",environment=\"l5\"})", "legendFormat": "Tempo up", "refId": "A"}],
+      "title": "Tempo Backend Health",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["myai", "runtime"],
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MyAI Runtime Overview",
+  "uid": "myai-runtime-overview",
+  "version": 1
+}

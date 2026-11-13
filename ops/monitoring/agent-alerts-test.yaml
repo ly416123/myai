@@ -10,6 +10,8 @@ tests:
     input_series:
       - series: 'up{job="myai-otel-collector"}'
         values: "0+0x20"
+      - series: 'up{job="myai-tempo"}'
+        values: "0+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "301+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -23,6 +25,9 @@ tests:
     alert_rule_test:
       - eval_time: 30s
         alertname: MyAiCollectorTargetDown
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: MyAiTempoTargetDown
         exp_alerts: []
       - eval_time: 30s
         alertname: AgentWorkerQueueStalled
@@ -44,6 +49,15 @@ tests:
               severity: warning
             exp_annotations:
               summary: MyAI telemetry collector metrics endpoint is unavailable
+      - eval_time: 2m
+        alertname: MyAiTempoTargetDown
+        exp_alerts:
+          - exp_labels:
+              job: myai-tempo
+              severity: warning
+            exp_annotations:
+              summary: MyAI Tempo trace query backend is unavailable
+              description: Check the Tempo pod, service endpoint, and local trace storage.
       - eval_time: 2m
         alertname: AgentExpiredRunLeases
         exp_alerts:
@@ -82,6 +96,8 @@ tests:
     input_series:
       - series: 'up{job="myai-otel-collector"}'
         values: "1+0x20"
+      - series: 'up{job="myai-tempo"}'
+        values: "1+0x20"
       - series: myai_agent_worker_queue_oldest_seconds
         values: "300+0x20"
       - series: myai_agent_worker_lease_expired_leases
@@ -95,6 +111,9 @@ tests:
     alert_rule_test:
       - eval_time: 10m
         alertname: MyAiCollectorTargetDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: MyAiTempoTargetDown
         exp_alerts: []
       - eval_time: 10m
         alertname: AgentWorkerQueueStalled

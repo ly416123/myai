@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myai-grafana-datasources
+  namespace: myai
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: MyAI Prometheus
+        uid: myai-prometheus
+        type: prometheus
+        access: proxy
+        url: http://myai-prometheus:9090
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 15s
+      - name: MyAI Tempo
+        uid: myai-tempo
+        type: tempo
+        access: proxy
+        url: http://myai-tempo:3200
+        isDefault: false
+        editable: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myai-grafana
+  namespace: myai
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: myai-grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myai-grafana
+        app.kubernetes.io/component: telemetry
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.4.15 # linux/amd64 manifest sha256:e8e2751f6d838529b13c5f876791404d0e2c35171f9638ee3ae56835e34226a9
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_PLUGINS_PREINSTALL_DISABLED
+              value: "true"
+            - name: GF_PLUGINS_CHECK_FOR_PLUGIN_UPDATES
+              value: "false"
+            - name: GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED
+              value: "true"
+            - name: GF_SECURITY_ADMIN_PASSWORD__FILE
+              value: /etc/grafana/secrets/admin-password
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+          ports:
+            - {name: web, containerPort: 3000}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 250m, memory: 384Mi}
+          readinessProbe:
+            httpGet: {path: /api/health, port: web}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/health, port: web}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/datasources, readOnly: true}
+            - {name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards, readOnly: true}
+            - {name: dashboard-json, mountPath: /var/lib/grafana/dashboards/myai, readOnly: true}
+            - {name: admin-secret, mountPath: /etc/grafana/secrets, readOnly: true}
+            - {name: data, mountPath: /var/lib/grafana}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: provisioning
+          configMap:
+            name: myai-grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: myai-grafana-dashboard-provider
+        - name: dashboard-json
+          configMap:
+            name: myai-grafana-dashboard-config
+        - name: admin-secret
+          secret:
+            secretName: myai-grafana-admin
+            defaultMode: 0440
+        - name: data
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myai-grafana
+  namespace: myai
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: myai-grafana
+  ports:
+    - {name: web, port: 3000, targetPort: web}
