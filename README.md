@@ -26,6 +26,8 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector 与 Prometheus，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker/Collector/Prometheus/PostgreSQL 均 Ready，Prometheus 已抓取 Collector 与应用/Hikari 指标。L5 Prometheus 已加载五条告警规则，包含近期失败 Run 规则；指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。可通过 `kubectl --kubeconfig ~/.kube/l5-k3s.yaml --context l5 -n myai port-forward svc/myai-prometheus 9090:9090` 后访问 `http://localhost:9090/consoles/agent-overview.html`。PostgreSQL 和 Prometheus 使用各自 5Gi local-path PVC。L5 是单节点环境，这些卷不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 和备份任务通过 CA 与服务名校验连接。每日加密备份 CronJob 已启用 30 天清理；L5 手动备份与隔离恢复演练通过。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。旧 namespace 和 PVC 均未复用、删除。
 
+L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和备份恢复边界见[运维手册](docs/operations/l5-runbook.md)。
+
 ## 环境与运行
 
 - Java 21
