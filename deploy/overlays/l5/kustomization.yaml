@@ -6,7 +6,7 @@ resources:
 images:
   - name: registry.example.invalid/myai
     newName: docker.io/library/myai-agent
-    newTag: l5-20261113-egress-proxy
+    newTag: l5-20261113-jdbc-trace
   - name: registry.example.invalid/myai-model-egress-proxy
     newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113
