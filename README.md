@@ -180,14 +180,14 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 ### 显式运行真实模型评测
 
-仓库维护了版本化、合成且不含业务数据的 `eval/scenarios-v1.json`，覆盖普通回答、计算器/天气/时区工具选择和协作规划。真实评测不由 Maven 测试或 CI 自动触发；它会向配置的 DeepSeek 模型发送这些样例，并把每个 Run 持久化到当前 PostgreSQL。只有同时显式设置评测模式和启用开关才会执行：
+仓库维护了版本化、合成且不含业务数据的评测集：`eval/scenarios-v1.json` 保留历史基线，默认运行的 `eval/scenarios-v2.json` 增加了针对已知来源误述的回答短语断言。样例覆盖普通回答、计算器/天气/时区工具选择和协作规划。真实评测不由 Maven 测试或 CI 自动触发；它会向配置的 DeepSeek 模型发送这些样例，并把每个 Run 持久化到当前 PostgreSQL。只有同时显式设置评测模式和启用开关才会执行：
 
     set -a; source .env; set +a
     export AGENT_EXECUTION_MODE=eval AGENT_EVAL_ENABLED=true
     export AGENT_EVAL_MAX_CASES=5 AGENT_EVAL_MAX_MODEL_CALLS=16 AGENT_EVAL_MAX_TOOL_CALLS=10
     mvn spring-boot:run
 
-评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准是流程成功、工具列表符合样例预期，且样例声明了协作路由/Worker 时计划也符合预期，不代表回答质量已经达标。2026-11-12 的真实模型报告中，时间查询样例调用了真实 Java 系统时钟，但回答误称其为模拟数据；本次为 `current_time` 和模拟天气结果增加显式来源/模拟标志及回归测试。尚未用真实模型复测这一修正，人工评分仍为空。
+评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。配置 `requiredAnswerPhrases` / `forbiddenAnswerPhrases` 的场景会按大小写敏感的子串匹配检查回答，并把 `answerAssertionsMatched` 写入受限报告；没有配置断言时该字段为 `null`。它只验证明确写出的短语条件，不替代人工语义质量评审。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准包括任务成功、工具选择、可选的协作计划及已配置的回答短语断言，不代表回答整体质量已经达标。2026-11-12 的真实模型报告中，时间查询样例调用了真实 Java 系统时钟，但回答误称其为模拟数据；v2 现对时区/当前时间短语和这条已观察到的错误表述增加断言。工具结果来源元数据也已补充，但尚未用真实模型复测，人工评分仍为空。
 
 报告包含模型回答，POSIX 文件系统上使用权限为 0700 的独立目录和 0600 的文件；默认写入已加入 Git 忽略规则的 `var/agent-evaluations`，不会被 `mvn clean` 删除。如果在只读容器中运行，需要把 `AGENT_EVAL_REPORT_DIRECTORY` 指向一个专用可写挂载点。评测数据中的用户提示会写入 PostgreSQL Run 历史，执行前应确认数据库保留策略适用。该入口不读取 Fake/Mock ModelClient，也不把真实评测加入 CI。
 

@@ -5,9 +5,16 @@ import java.util.List;
 /** One sanitized, version-controlled prompt and its expected tool selection. */
 public record AgentEvaluationScenario(String id, EvaluationWorkflow workflow, String prompt,
                                       List<String> expectedTools, String expectedPlanRoute,
-                                      List<String> expectedWorkers) {
+                                      List<String> expectedWorkers, List<String> requiredAnswerPhrases,
+                                      List<String> forbiddenAnswerPhrases) {
     public AgentEvaluationScenario(String id, EvaluationWorkflow workflow, String prompt, List<String> expectedTools) {
-        this(id, workflow, prompt, expectedTools, null, List.of());
+        this(id, workflow, prompt, expectedTools, null, List.of(), List.of(), List.of());
+    }
+
+    public AgentEvaluationScenario(String id, EvaluationWorkflow workflow, String prompt,
+                                   List<String> expectedTools, String expectedPlanRoute,
+                                   List<String> expectedWorkers) {
+        this(id, workflow, prompt, expectedTools, expectedPlanRoute, expectedWorkers, List.of(), List.of());
     }
 
     public AgentEvaluationScenario {
@@ -17,6 +24,8 @@ public record AgentEvaluationScenario(String id, EvaluationWorkflow workflow, St
         }
         expectedTools = expectedTools == null ? List.of() : List.copyOf(expectedTools);
         expectedWorkers = expectedWorkers == null ? List.of() : List.copyOf(expectedWorkers);
+        requiredAnswerPhrases = validatePhrases(requiredAnswerPhrases, "required");
+        forbiddenAnswerPhrases = validatePhrases(forbiddenAnswerPhrases, "forbidden");
         if (expectedTools.stream().anyMatch(name -> name == null || !name.matches("[a-zA-Z0-9_-]{1,80}"))) {
             throw new IllegalArgumentException("Invalid expected tool name");
         }
@@ -27,5 +36,14 @@ public record AgentEvaluationScenario(String id, EvaluationWorkflow workflow, St
         if (expectedWorkers.stream().anyMatch(name -> name == null || !name.matches("[a-zA-Z0-9_-]{1,80}"))) {
             throw new IllegalArgumentException("Invalid expected worker name");
         }
+    }
+
+    private static List<String> validatePhrases(List<String> phrases, String kind) {
+        List<String> copy = phrases == null ? List.of() : List.copyOf(phrases);
+        if (copy.size() > 20 || copy.stream().anyMatch(phrase -> phrase == null || phrase.isBlank()
+                || phrase.length() > 120)) {
+            throw new IllegalArgumentException("Invalid " + kind + " answer phrase assertions");
+        }
+        return copy;
     }
 }

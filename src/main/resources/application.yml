@@ -40,7 +40,7 @@ agent:
     interval: ${AGENT_RUN_RETENTION_INTERVAL:PT24H}
     initial-delay: ${AGENT_RUN_RETENTION_INITIAL_DELAY:PT1M}
   evaluation-enabled: ${AGENT_EVAL_ENABLED:false}
-  evaluation-dataset: ${AGENT_EVAL_DATASET:eval/scenarios-v1.json}
+  evaluation-dataset: ${AGENT_EVAL_DATASET:eval/scenarios-v2.json}
   evaluation-report-directory: ${AGENT_EVAL_REPORT_DIRECTORY:var/agent-evaluations}
   evaluation-max-cases: ${AGENT_EVAL_MAX_CASES:5}
   evaluation-max-model-calls: ${AGENT_EVAL_MAX_MODEL_CALLS:16}

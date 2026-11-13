@@ -20,6 +20,7 @@ class ContainerDeploymentContractTest {
         assertTrue(dockerfile.contains("USER 10001:10001"));
         assertTrue(dockerfile.contains("COPY target/minimal-agent-runtime-1.0-SNAPSHOT.jar /app/app.jar"));
         assertTrue(dockerfile.contains("COPY eval/scenarios-v1.json /app/eval/scenarios-v1.json"));
+        assertTrue(dockerfile.contains("COPY eval/scenarios-v2.json /app/eval/scenarios-v2.json"));
         assertFalse(dockerfile.contains("COPY . ."));
         assertTrue(ignore.contains("deepseek.key"));
         assertTrue(ignore.contains(".env"));

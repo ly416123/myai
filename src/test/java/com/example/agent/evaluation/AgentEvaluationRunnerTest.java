@@ -25,6 +25,66 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AgentEvaluationRunnerTest {
     @Test
+    void answerPhraseAssertionsFailACompletedCaseWithIncorrectProvenance(@TempDir Path output) throws Exception {
+        var dataset = AgentEvaluationDatasetLoader.load(
+                Path.of("src/test/resources/eval/scenario-answer-assertions.json"),
+                new ObjectMapper().findAndRegisterModules());
+        var tools = new ToolRegistry();
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse(
+                    "Asia/Shanghai 的当前时间来自模拟数据工具。", List.of(), 8L, 6L), tools, executor,
+                    new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(10),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            var result = runner.run(dataset, "test-model", new AgentEvaluationConfig(true, 1, 5, 0,
+                    Duration.ofMinutes(1), output, null, null));
+
+            assertEquals(1, result.completedCases());
+            assertEquals(0, result.passedCases(), "phrase mismatch must fail evaluation despite successful tool workflow");
+            assertEquals(Boolean.FALSE, result.cases().getFirst().answerAssertionsMatched());
+        }
+    }
+
+    @Test
+    void answerPhraseAssertionsPassWhenRequiredPhraseIsPresentAndForbiddenPhraseIsAbsent(@TempDir Path output) {
+        var tools = new ToolRegistry();
+        var dataset = new AgentEvaluationDataset("test-answer-assertions-v1", List.of(
+                new AgentEvaluationScenario("time-source-provenance", EvaluationWorkflow.SINGLE_AGENT,
+                        "Query the current time", List.of(), null, List.of(),
+                        List.of("Asia/Shanghai"), List.of("模拟数据工具"))));
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse(
+                    "Asia/Shanghai 当前时间为 2026-11-14。", List.of(), 8L, 6L), tools, executor,
+                    new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(10),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            var result = runner.run(dataset, "test-model", new AgentEvaluationConfig(true, 1, 5, 0,
+                    Duration.ofMinutes(1), output, null, null));
+
+            assertEquals(1, result.passedCases());
+            assertEquals(Boolean.TRUE, result.cases().getFirst().answerAssertionsMatched());
+        }
+    }
+
+    @Test
+    void answerPhraseAssertionsPreserveCaseForTechnicalIdentifiers(@TempDir Path output) {
+        var tools = new ToolRegistry();
+        var dataset = new AgentEvaluationDataset("test-answer-case-v1", List.of(
+                new AgentEvaluationScenario("timezone-case", EvaluationWorkflow.SINGLE_AGENT,
+                        "Query the current time", List.of(), null, List.of(),
+                        List.of("Asia/Shanghai"), List.of())));
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse(
+                    "asia/shanghai 当前时间为 2026-11-14。", List.of(), 8L, 6L), tools, executor,
+                    new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(10),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            var result = runner.run(dataset, "test-model", new AgentEvaluationConfig(true, 1, 5, 0,
+                    Duration.ofMinutes(1), output, null, null));
+
+            assertEquals(0, result.passedCases());
+            assertEquals(Boolean.FALSE, result.cases().getFirst().answerAssertionsMatched());
+        }
+    }
+
+    @Test
     void recordsExpectedToolAndTokenOutcomesWithoutRequiringAProvider(@TempDir Path output) throws Exception {
         AtomicInteger modelCalls = new AtomicInteger();
         var tools = new ToolRegistry();
@@ -54,6 +114,7 @@ class AgentEvaluationRunnerTest {
             assertEquals(22L, result.cases().getFirst().promptTokens());
             assertEquals(9L, result.cases().getFirst().completionTokens());
             assertNull(result.cases().getFirst().estimatedCostUsd());
+            assertNull(result.cases().getFirst().answerAssertionsMatched());
             assertTrue(Files.exists(result.reportPath()));
             assertTrue(Files.readString(result.reportPath()).contains("calculator-basic"));
             assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(
@@ -131,6 +192,18 @@ class AgentEvaluationRunnerTest {
         assertEquals("2026-11-v1", dataset.version());
         assertEquals(5, dataset.scenarios().size());
         assertTrue(dataset.scenarios().stream().anyMatch(scenario -> scenario.expectedTools().contains("weather")));
+    }
+
+    @Test
+    void newerDatasetVersionDeclaresKnownAnswerQualityAssertions() {
+        var dataset = AgentEvaluationDatasetLoader.load(java.nio.file.Path.of("eval/scenarios-v2.json"),
+                new ObjectMapper().findAndRegisterModules());
+        var timeScenario = dataset.scenarios().stream()
+                .filter(scenario -> scenario.id().equals("timezone-current-time")).findFirst().orElseThrow();
+
+        assertEquals("2026-11-v2", dataset.version());
+        assertEquals(List.of("Asia/Shanghai", "当前时间"), timeScenario.requiredAnswerPhrases());
+        assertEquals(List.of("模拟数据工具"), timeScenario.forbiddenAnswerPhrases());
     }
 
     @Test

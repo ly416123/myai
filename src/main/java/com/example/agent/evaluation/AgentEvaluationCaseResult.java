@@ -15,7 +15,8 @@ public record AgentEvaluationCaseResult(String scenarioId, String runId, String 
                                         List<AgentEvaluationPlanTask> plannedTasks,
                                         int modelCalls, int toolCalls, boolean tokenUsageKnown,
                                         Long promptTokens, Long completionTokens, BigDecimal estimatedCostUsd,
-                                        long durationMillis, String answer, Integer manualRating) {
+                                        long durationMillis, String answer, Boolean answerAssertionsMatched,
+                                        Integer manualRating) {
     public AgentEvaluationCaseResult {
         expectedTools = List.copyOf(expectedTools);
         actualTools = List.copyOf(actualTools);

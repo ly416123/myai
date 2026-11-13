@@ -1,0 +1,38 @@
+{
+  "version": "2026-11-v2",
+  "scenarios": [
+    {
+      "id": "general-answer-no-tool",
+      "workflow": "SINGLE_AGENT",
+      "prompt": "用中文用一句话说明 Java 里的不可变对象有什么特点。不要查询外部信息。",
+      "expectedTools": []
+    },
+    {
+      "id": "calculator-addition",
+      "workflow": "SINGLE_AGENT",
+      "prompt": "请使用计算器工具计算 2026 + 11，并只根据工具结果回答。",
+      "expectedTools": ["calculator"]
+    },
+    {
+      "id": "simulated-weather",
+      "workflow": "SINGLE_AGENT",
+      "prompt": "查询北京的模拟天气，并明确说明结果是模拟数据。",
+      "expectedTools": ["weather"]
+    },
+    {
+      "id": "timezone-current-time",
+      "workflow": "SINGLE_AGENT",
+      "prompt": "查询 Asia/Shanghai 时区的当前时间，并告知我时区名称。",
+      "expectedTools": ["current_time"],
+      "requiredAnswerPhrases": ["Asia/Shanghai", "当前时间"],
+      "forbiddenAnswerPhrases": ["模拟数据工具"]
+    },
+    {
+      "id": "supervisor-plan-route",
+      "workflow": "COLLABORATIVE",
+      "prompt": "请用一句话解释 Java record 的特点。根据任务复杂度决定是否拆分。",
+      "expectedTools": [],
+      "expectedPlanRoute": "NO_SPLIT"
+    }
+  ]
+}

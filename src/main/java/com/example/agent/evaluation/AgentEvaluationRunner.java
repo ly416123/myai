@@ -123,6 +123,7 @@ public final class AgentEvaluationRunner {
                     || scenario.expectedPlanRoute().equals(planRoute))
                     && (scenario.expectedWorkers().isEmpty()
                     || sameTools(scenario.expectedWorkers(), plannedWorkers));
+            Boolean answerAssertionsMatched = matchAnswerPhrases(scenario, run.finalAnswer());
             Long promptTokens = run.tokenUsageKnown() ? run.promptTokens() : null;
             Long completionTokens = run.tokenUsageKnown() ? run.completionTokens() : null;
             BigDecimal caseCost = estimateCost(promptTokens, completionTokens, config);
@@ -134,13 +135,14 @@ public final class AgentEvaluationRunner {
                 allUsageKnown = false;
                 costKnown = false;
             }
-            boolean passedCase = completedSuccessfully && toolsMatch && planMatches;
+            boolean passedCase = completedSuccessfully && toolsMatch && planMatches
+                    && !Boolean.FALSE.equals(answerAssertionsMatched);
             if (passedCase) passed++;
             results.add(new AgentEvaluationCaseResult(scenario.id(), run.runId(), run.status().name(),
                     run.failureCategory(), completedSuccessfully, scenario.expectedTools(), actualTools, toolsMatch,
                     planRoute, planMatches, plannedTaskCount, plannedWorkers, plannedTasks, run.modelCalls(), run.toolCalls(),
                     run.tokenUsageKnown(), promptTokens, completionTokens, caseCost,
-                    run.totalDurationMillis(), run.finalAnswer(), null));
+                    run.totalDurationMillis(), run.finalAnswer(), answerAssertionsMatched, null));
         }
 
         Instant completedAt = Instant.now();
@@ -220,12 +222,21 @@ public final class AgentEvaluationRunner {
         return expected.stream().sorted().toList().equals(actual.stream().sorted().toList());
     }
 
+    private static Boolean matchAnswerPhrases(AgentEvaluationScenario scenario, String answer) {
+        if (scenario.requiredAnswerPhrases().isEmpty() && scenario.forbiddenAnswerPhrases().isEmpty()) return null;
+        String answerText = answer == null ? "" : answer;
+        return scenario.requiredAnswerPhrases().stream()
+                .allMatch(answerText::contains)
+                && scenario.forbiddenAnswerPhrases().stream()
+                .noneMatch(answerText::contains);
+    }
+
     private static Duration minimum(Duration left, Duration right) { return left.compareTo(right) <= 0 ? left : right; }
 
     private static AgentEvaluationCaseResult notRun(AgentEvaluationScenario scenario, String status) {
         return new AgentEvaluationCaseResult(scenario.id(), null, status, null, false,
                 scenario.expectedTools(), List.of(), false, null, false, 0, List.of(), List.of(), 0, 0,
-                false, null, null, null, 0, null, null);
+                false, null, null, null, 0, null, null, null);
     }
 
     private record EvaluationReportFile(String datasetVersion, String model, Instant startedAt, Instant completedAt,

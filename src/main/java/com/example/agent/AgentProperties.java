@@ -31,7 +31,7 @@ public class AgentProperties {
     private Duration retentionPeriod = Duration.ZERO;
     private int retentionBatchSize = 500;
     private boolean evaluationEnabled;
-    private Path evaluationDataset = Path.of("eval/scenarios-v1.json");
+    private Path evaluationDataset = Path.of("eval/scenarios-v2.json");
     private Path evaluationReportDirectory = Path.of("var/agent-evaluations");
     private int evaluationMaxCases = 5;
     private int evaluationMaxModelCalls = 16;

@@ -1,0 +1,13 @@
+{
+  "version": "test-answer-assertions-v1",
+  "scenarios": [
+    {
+      "id": "time-source-provenance",
+      "workflow": "SINGLE_AGENT",
+      "prompt": "查询 Asia/Shanghai 时区当前时间，并告知时区名称。",
+      "expectedTools": [],
+      "requiredAnswerPhrases": ["Asia/Shanghai"],
+      "forbiddenAnswerPhrases": ["模拟数据工具"]
+    }
+  ]
+}
