@@ -71,3 +71,20 @@ management:
       export:
         enabled: ${AGENT_OTLP_METRICS_ENABLED:false}
         url: ${AGENT_OTLP_METRICS_ENDPOINT:http://localhost:4318/v1/metrics}
+
+# Export only SQL operation spans. Bind values remain excluded and SQL text is sanitized.
+jdbc:
+  includes: QUERY
+  datasource-proxy:
+    include-parameter-values: false
+    query:
+      enable-logging: false
+  opentelemetry:
+    spans:
+      enabled: true
+    metrics:
+      enabled: false
+    analysis:
+      enabled: true
+      sanitize:
+        enabled: true

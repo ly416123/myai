@@ -14,6 +14,7 @@
         <json-schema-validator.version>2.0.8</json-schema-validator.version>
         <httpcore5.version>5.4.4</httpcore5.version>
         <postgresql.version>42.7.14</postgresql.version>
+        <datasource-micrometer.version>1.5.0</datasource-micrometer.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -78,6 +79,14 @@
         </dependency>
         <dependency>
             <groupId>io.opentelemetry</groupId><artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.ttddyy.observation</groupId><artifactId>datasource-micrometer-spring-boot</artifactId>
+            <version>${datasource-micrometer.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.ttddyy.observation</groupId><artifactId>datasource-micrometer-opentelemetry</artifactId>
+            <version>${datasource-micrometer.version}</version>
         </dependency>
         <dependency>
             <groupId>com.openai</groupId><artifactId>openai-java</artifactId><version>${openai.version}</version>

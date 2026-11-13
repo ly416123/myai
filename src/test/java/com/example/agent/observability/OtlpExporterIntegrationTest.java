@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.annotation.DirtiesContext;
@@ -42,6 +43,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 @Testcontainers(disabledWithoutDocker = true)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -86,6 +89,9 @@ class OtlpExporterIntegrationTest {
     @Autowired
     private ObservationRegistry observations;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry properties) {
         properties.add("AGENT_OTLP_METRICS_ENDPOINT", () -> collectorEndpoint("/v1/metrics"));
@@ -119,12 +125,22 @@ class OtlpExporterIntegrationTest {
         assertNotNull(meters.find("hikaricp.connections.active").gauge(), "Hikari pool gauges must be bound locally");
         meters.counter("agent.otlp.export.probe").increment();
         Observation.createNotStarted("myai.otlp.export.probe", observations).start().stop();
+        String sensitiveParameter = "jdbc-sensitive-parameter-must-not-be-exported";
+        assertEquals(sensitiveParameter, jdbc.queryForObject("SELECT ?::text", String.class, sensitiveParameter));
+        String sensitiveLiteral = "jdbc-literal-sensitive-value-must-be-sanitized";
+        assertEquals(sensitiveLiteral, jdbc.queryForObject("SELECT '" + sensitiveLiteral + "'::text", String.class));
 
         String scrape = awaitPrometheusMetrics(Duration.ofSeconds(20));
         assertAlertMetricsAreExported(scrape);
 
         assertTrue(awaitCollectorTrace(Duration.ofSeconds(10)),
                 "Collector debug exporter should receive the Agent trace");
+        assertTrue(awaitCollectorTraceAttribute("db.query.text", Duration.ofSeconds(10)),
+                "Collector should receive an OpenTelemetry database query span");
+        assertFalse(COLLECTOR.getLogs().contains(sensitiveParameter),
+                "JDBC bind parameter values must not be exported to traces");
+        assertFalse(COLLECTOR.getLogs().contains(sensitiveLiteral),
+                "SQL string literals must be sanitized before trace export");
     }
 
     private static void assertAlertMetricsAreExported(String scrape) throws Exception {
@@ -194,6 +210,16 @@ class OtlpExporterIntegrationTest {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
             if (COLLECTOR.getLogs().contains("myai.otlp.export.probe")) return true;
+            TimeUnit.MILLISECONDS.sleep(250);
+        }
+        return false;
+    }
+
+    private static boolean awaitCollectorTraceAttribute(String attribute, Duration timeout)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (COLLECTOR.getLogs().contains(attribute)) return true;
             TimeUnit.MILLISECONDS.sleep(250);
         }
         return false;
