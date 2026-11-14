@@ -205,6 +205,6 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；应用 Runtime 镜像的 HIGH/CRITICAL 漏洞扫描仍阻断 CI，仓库 Docker/Kubernetes 配置的 HIGH/CRITICAL 错误也阻断 CI。模型出站代理镜像的 Trivy 扫描保留并输出结果，但按项目当前范围不因中间件镜像 CVE 阻断功能验证或 GHCR 发布。该策略不表示扫描发现已修复或系统通过安全认证。两个 Dockerfile 的基础镜像均固定到多架构 OCI manifest digest，Dependabot 每周检查根目录、`ops/` 中的 Dockerfile 基础镜像，以及 `deploy/k8s/base/` 中 Kubernetes 清单引用的镜像标签。Dependabot 仅创建待审阅的更新 PR，不会自动部署；审阅更新时仍需检查摘要和功能测试结果。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
 
-CI 在 Java 构建前还会运行 Actionlint 检查 GitHub Actions 工作流语法和常见配置错误。Actionlint 固定为 v1.7.12 Linux amd64，并校验官方发布归档 SHA-256 后才执行；本地也可下载相同版本检查：`actionlint -color .github/workflows/ci.yml`。远端工作流仍需在获准推送后由 GitHub Actions 实际运行验收。
+CI 在 Java 构建前还会运行 Actionlint 检查 GitHub Actions 工作流语法和常见配置错误。Actionlint 固定为 v1.7.12 Linux amd64，并校验官方发布归档 SHA-256 后才执行；本地也可下载相同版本检查：`actionlint -color .github/workflows/ci.yml`。当前远端 `verify` Job 已通过；GHCR 发布需要在镜像包设置中授予工作流仓库 Write 权限，状态见路线图。
 
-本地 Maven 构建、Prometheus 告警规则与 L5 部署契约的最近验收记录，见[企业升级路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 按用户决定继续保留。
+本地 Maven 构建、Prometheus 告警规则与 L5 部署契约的最近验收记录，见[企业升级路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。GitHub Actions 的 `verify` Job 已通过；GHCR 镜像发布仍待包访问权限配置后复验。Prometheus v3.16.0 按用户决定继续保留。
