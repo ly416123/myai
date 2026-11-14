@@ -10,6 +10,8 @@ trap 'rm -f "$stage_dir/agent-alerts.yaml" "$stage_dir/agent-alerts-test.yaml"; 
 
 cp "$repo_root/deploy/k8s/base/agent-alerts.yaml" "$stage_dir/agent-alerts.yaml"
 cp "$repo_root/ops/monitoring/agent-alerts-test.yaml" "$stage_dir/agent-alerts-test.yaml"
+# Prometheus runs as a non-root user; allow it to traverse the temporary directory.
+chmod 0755 "$stage_dir"
 
 docker run --rm \
   --platform "$platform" \
