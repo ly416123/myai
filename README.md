@@ -24,7 +24,7 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 `l5` 指 `ly@192.168.122.55`。2026-11-13 复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致；28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
 
-MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector、Prometheus、Tempo 与 Grafana，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus、Tempo、Grafana 和 PostgreSQL 均 Ready。Prometheus 抓取应用、Collector 与 Tempo 指标，保留 9 条运行/可观测性告警规则；告警仅记录在本地，通知投递暂缓。MyAI 不提供数据库备份/恢复能力；PostgreSQL 数据卷或单节点损坏可能导致 Run 与检查点丢失。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。Grafana Runtime Overview 仪表盘包含队列、租约、失败、连接池、Collector 和 Tempo 健康面板。L5 已演练 Tempo 暂停时 Collector 持久队列在 Collector 重启后恢复投递一条合成 Trace；该结果不代表节点/磁盘恢复或零丢失保证。PostgreSQL 与监控/Trace 数据存于单节点 local-path PVC，不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。Prometheus 当前为 v3.16.0，Trivy 报告一项可修复 HIGH（CVE-2026-78661）；服务仅集群内可达；用户已选择继续使用当前版本，不再投入升级工作，CVE-2026-78661 作为已知未修复风险记录。
+MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector、Prometheus、Tempo 与 Grafana，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus、Tempo、Grafana 和 PostgreSQL 均 Ready。Prometheus 抓取应用、Collector 与 Tempo 指标，保留 10 条运行/可观测性告警规则，其中包含 Worker JVM Heap 持续超过最大值 85% 的告警；告警仅记录在本地，通知投递暂缓。MyAI 不提供数据库备份/恢复能力；PostgreSQL 数据卷或单节点损坏可能导致 Run 与检查点丢失。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。Grafana Runtime Overview 仪表盘包含队列、租约、失败、连接池、Collector 和 Tempo 健康面板。L5 已演练 Tempo 暂停时 Collector 持久队列在 Collector 重启后恢复投递一条合成 Trace；该结果不代表节点/磁盘恢复或零丢失保证。PostgreSQL 与监控/Trace 数据存于单节点 local-path PVC，不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。**当前迭代以功能实现和运行流程验证为重点；按项目约束忽略中间件镜像 CVE，不为此升级版本或构建自维护派生镜像。**Prometheus 当前为 v3.16.0，按用户决定不升级；扫描记录见[运维手册](docs/operations/l5-runbook.md)。
 
 L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数据持久化限制见[运维手册](docs/operations/l5-runbook.md)。
 
@@ -49,7 +49,7 @@ L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数
 
 ### 容器与 K3s Worker/Job
 
-第三方镜像 digest 由 `bash ops/tests/image-digests-test.sh` 对照 Registry manifest index 校验，并纳入 CI。当前源码已修正此前不可从 Registry 解析的 L5 本地 digest；L5 Pod 仍运行已缓存的旧引用，节点直接拉取 Docker Hub 超时，导入正确镜像并完成滚动更新前不要把本地 overlay 应用到 L5。
+第三方镜像 digest 由 `bash ops/tests/image-digests-test.sh` 对照 Registry 的 `linux/amd64` 平台 manifest 校验，并纳入 CI。L5 当前为 amd64 节点，因此部署固定平台 manifest digest，避免依赖节点外网解析多架构 index；其他架构部署必须使用各自平台的 manifest digest。L5 已通过保留原始 manifest 与压缩层的 OCI 归档导入镜像，并滚动更新 Grafana、Tempo 和 PostgreSQL；OTel Collector 与 Prometheus 的运行摘要原已匹配。应用到 L5 时使用 `deploy/overlays/l5`，不要直接应用包含占位镜像的通用清单 `deploy/k8s`。
 
 仓库提供非 root、只读根文件系统兼容的运行时镜像文件。先由 Maven 打包，再构建镜像：
 
@@ -91,7 +91,7 @@ CLI 命令：
 
     mvn clean test
 
-Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus、Tempo 和 Grafana，9 条 Prometheus 告警规则均已加载；包括 Worker 队列轮询失败和 Tempo 查询后端不可用告警。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；Trivy HIGH CVE-2026-78661 仍为已知未修复风险。
+Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus、Tempo 和 Grafana，10 条 Prometheus 告警规则均已加载；包括 Worker JVM Heap 高占用、队列轮询失败和 Tempo 查询后端不可用告警。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；中间件镜像漏洞扫描不作为当前功能验收门槛，扫描策略详见下方 CI 说明。
 
 ## Workflow 状态与恢复语义
 
@@ -105,7 +105,7 @@ RunStore 是存储边界，当前提供：
 
 PostgreSQL claim 使用数据库条件更新，租约到期后新 owner 获得更高 fencing token；旧 owner 的状态写回会被拒绝。租约只阻止陈旧状态覆盖，不能撤销已发出的外部模型/工具副作用。
 
-终态 Run 支持按保留周期自动清理，并级联删除检查点、消息、步骤和子任务投影；清理按小批事务执行，另写入不含 Run ID/正文的数据库审计记录。`AGENT_RUN_RETENTION_PERIOD` 默认 `PT0S`（禁用），用户已选择继续关闭自动清理，待数据分类、法规/合同要求和删除流程确认后再配置；设置为 ISO-8601 时长（例如 `P90D`）后，应用启动一分钟后开始定期清理，每天执行一次；每次最多处理 10 个批次，每批由 `AGENT_RUN_RETENTION_BATCH_SIZE` 控制（默认 500）。保留周期须结合数据分类、法规/合同要求和恢复窗口评估后配置，系统不替业务指定期限。
+终态 Run 支持按保留周期自动清理，并级联删除检查点、消息、步骤和子任务投影；清理按小批事务执行，另写入不含 Run ID/正文的数据库审计记录。`AGENT_RUN_RETENTION_PERIOD` 默认 `PT0S`（禁用），用户已选择继续关闭自动清理，待数据分类、法规/合同要求和删除流程确认后再配置；L5 `myai-runtime` ConfigMap 也显式设为 `PT0S`，Worker 与一次性 Job 都从该配置读取，避免依赖代码默认值。设置为 ISO-8601 时长（例如 `P90D`）后，应用启动一分钟后开始定期清理，每天执行一次；每次最多处理 10 个批次，每批由 `AGENT_RUN_RETENTION_BATCH_SIZE` 控制（默认 500）。保留周期须结合数据分类、法规/合同要求和恢复窗口评估后配置，系统不替业务指定期限。
 
 工具调用检查点分为：
 
@@ -142,15 +142,17 @@ RunRecord 和步骤记录至少包含：
 - 总运行时长、是否恢复；
 - Token 用量：模型响应能提供时记录 prompt/completion 数；任一请求用量缺失或请求失败时，全任务 Token 总量显示为未知，不进行估算。
 
-CLI /runs 展示简要汇总。日志只输出 ID、工具名、状态、耗时、失败类别和用量是否可知；不输出 API Key、消息正文、工具参数或原始异常文本。
+CLI /runs 展示简要汇总。日志只输出 ID、已注册工具名、状态、耗时、失败类别和用量是否可知；模型返回的未注册工具名统一记作 `unregistered`。日志不输出 API Key、消息正文、工具参数或原始异常文本。
 
 Worker 轮询时刷新四个 PostgreSQL 聚合 Gauge：`agent.worker.queue.depth`（可恢复 Run 数）、`agent.worker.lease.expired`（已过期 Run 租约数）、`agent.worker.queue.oldest`（最老可恢复 Run 的等待秒数）和 `agent.worker.run.failed.recent`（最近 5 分钟失败 Run 数）。这些值不带 Run ID 等高基数标签。每个 Worker 副本观测的是同一份数据库全局队列快照，多副本聚合仪表盘应按最大值/单实例代表读取，不能把副本样本求和。Spring Boot/Hikari 还会自动绑定 `hikaricp.connections.active`、`hikaricp.connections.max` 等连接池指标。OTLP metrics/traces 默认关闭。`OtlpExporterIntegrationTest` 使用 Testcontainers 启动临时 OpenTelemetry Collector，验证真实 OTLP 推送、trace 接收，以及告警 PromQL 中的指标名与 Collector Prometheus 样本一致；Prometheus 导出名包含单位后缀，例如租约数为 `agent_worker_lease_expired_leases`。测试使用 Testcontainers PostgreSQL 和已连接的 Hikari 池验证连接池指标；该测试不部署长期监控后端。
 
-Run 执行期间会保持 `agent.run` Observation scope；模型调用在线程间显式恢复对应的步骤 Observation。CollaborativeWorkflow 的本地并行 Worker 使用 `agent.step` 作为 Worker span，模型与工具步骤嵌套其下。回归测试验证 `Run → Worker → Model` 父子层级。独立 `separateTaskWorkers` 通过数据库领取任务时，父任务检查点会保存 W3C `traceparent`/`tracestate`，新 Worker 恢复远端父上下文后继续原 Trace；不传播 baggage，避免把业务敏感值带入任务元数据。测试验证跨 Worker 的 `Run → Worker → Model` Trace 父子关系以及 PostgreSQL JSONB 往返。JDBC 已使用 [Datasource Micrometer](https://github.com/jdbc-observations/datasource-micrometer) 与 OpenTelemetry 语义映射导出 query span；只观测 SQL 执行，默认不记录绑定参数，SQL 字面量在 trace 中脱敏，查询日志保持关闭。Testcontainers 集成测试验证 Collector 收到数据库 span 且敏感参数/字面量未导出。模型提示词、响应及工具参数不作为 span 属性。**2026-11-13 已部署到 L5，Worker 运行 `myai-agent:l5-20261113-jdbc-trace`，2/2 Ready；OTel Collector 日志确认持续收到 Trace 信号。** **2026-11-14 随后部署当前源码镜像 `myai-agent:l5-20261114-worker-instance`，Worker 2/2 Ready 且重启数为 0；镜像内 JAR 的整体归档 SHA 与本地重打包文件不同；逐项比较 295 个 ZIP 文件内容无差异，v2 评测集 SHA-256 两端一致，Flyway schema 仍为 v6，Run 汇总未变化。此镜像基于已部署 Worker 镜像追加当前 JAR/评测资源层，以适应 L5 无法直连 Docker Hub 的环境；不是从 Dockerfile 全量重建，后续应在可用 CI/镜像仓库中生成干净镜像。**
+Run 执行期间会保持 `agent.run` Observation scope；模型调用在线程间显式恢复对应的步骤 Observation。CollaborativeWorkflow 的本地并行 Worker 使用 `agent.step` 作为 Worker span，模型与工具步骤嵌套其下。回归测试验证 `Run → Worker → Model` 父子层级。独立 `separateTaskWorkers` 通过数据库领取任务时，父任务检查点会保存 W3C `traceparent`/`tracestate`，新 Worker 恢复远端父上下文后继续原 Trace；不传播 baggage，避免把业务敏感值带入任务元数据。测试验证跨 Worker 的 `Run → Worker → Model` Trace 父子关系以及 PostgreSQL JSONB 往返。JDBC 已使用 [Datasource Micrometer](https://github.com/jdbc-observations/datasource-micrometer) 与 OpenTelemetry 语义映射导出 query span；只观测 SQL 执行，默认不记录绑定参数，SQL 字面量在 trace 中脱敏，查询日志保持关闭。Testcontainers 集成测试验证 Collector 收到数据库 span 且敏感参数/字面量未导出。模型提示词、响应及工具参数不作为 span 属性。**2026-11-13 已部署到 L5，Worker 运行 `myai-agent:l5-20261113-jdbc-trace`，2/2 Ready；OTel Collector 日志确认持续收到 Trace 信号。** **2026-11-14 随后从当前完整 Dockerfile 构建并部署 `myai-agent:l5-20261114-clean-dockerfile`。OCI manifest 为 `sha256:9bb463f87263bc8dfcf82ca71d69a57e2b8bb26c1aad81afe591e5ea16f08f22`，镜像 config/imageID 为 `sha256:d7612c547cb4fdc3fcc1d5266d0799f17f1c77067f799db16535304a306ba495`；L5 Worker 2/2 Ready、0 次重启。隔离检查确认 UID 10001、Java 21.0.13、应用 JAR SHA-256 `3da1a188210e0f1aabeef4f39be2b07bab8001f13af76e830ae495eb0edc78e5`，v2 评测资源与本地一致。Trivy 0 个 HIGH/CRITICAL，使用缓存 Vulnerability DB（2026-11-13 00:58 UTC）和 Java DB（2026-11-12 00:58 UTC）；更新漏洞库时镜像源连接超时，因此扫描不代表最新情报。该镜像直接导入 L5 containerd，尚未发布到 GHCR，远端 CI 尚未触发。Flyway 仍为 v6，Run 汇总未变化。**
+
+**2026-11-14 Worker 随后更新为 `myai-agent:l5-20261114-runtime-current`：基于上述完整 Dockerfile 镜像追加当前工作区应用 JAR，manifest SHA-256 为 `0ce43b84944beac5d2895e1f7760d895680e151ed4cebb489ae64ce64edd7378`，两个 Pod 的 imageID 为 `sha256:2a96238b72f79da559e8770815a70f5ac95eec8ea500bcc81c6bfda8e141eaa3`，Pod 内 JAR SHA-256 与本地 `target` 一致。两个 Worker 均 Ready、0 次重启。镜像尚未发布 GHCR；该工作区镜像未经过远端 CI。**
 
 Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 告警规则统一位于 `deploy/k8s/base/agent-alerts.yaml`，覆盖 Collector/Tempo target、队列等待、过期租约、近 5 分钟失败 Run、Hikari 连接池和 Worker 队列轮询失败、队列指标缺失及单副本失联；实例心跳使用 Pod 的 `service.instance.id` 标签。Collector 指标过期窗口为 5 分钟，单副本失联告警通常约 7 分钟后触发。阈值是运维起点，不是业务 SLO。Kustomize 从该文件生成 Prometheus ConfigMap，`promtool` 测试也读取同一文件。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称及 `service.instance.id` 标签映射；L5 已部署单副本 Collector、Prometheus、Tempo、Grafana 和双副本 Worker，9 条 Prometheus 告警规则已加载，包含近期失败 Run、Worker 持久队列轮询失败、Worker 队列指标缺失、单个 Worker 副本失联与 Tempo target 不可用告警。**2026-11-14 L5 已部署并验证 Tempo 2.10.10（7 天保留、10 GiB 同节点 PVC）与 Grafana 12.4.15（内部 ClusterIP、匿名访问关闭）；Tempo/Grafana 均 Ready。合成 Trace 的 Collector 接收、Tempo Trace ID 查询及 Grafana Tempo 数据源均已验证。Grafana 已预置 MyAI Prometheus 数据源和 Runtime Overview 仪表盘，含队列、过期租约、近期失败、数据库连接池、Collector 与 Tempo 健康 7 个面板；仪表盘 API 返回 7 个面板，Prometheus 数据源健康检查 OK，逐条 PromQL 查询成功。** Collector 启用 1 GiB 同节点持久发送队列，发送重试最长 1 小时；Tempo/队列 PVC 都不提供节点故障恢复或备份保证。Trace 资源包含 `deployment.environment.name=l5`，Prometheus Collector/Tempo 活动目标带 `environment=l5`；跨环境规范仍待制定。后端首次不可用期间已超过原 5 分钟重试期限的 span 已丢弃，不能恢复。Grafana 关闭默认插件预装与联网更新，避免运行时动态安装。告警通知按用户决定短期暂缓，多副本队列 Gauge 汇总继续使用 max/单实例值。
 
-Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖当前 9 条规则的 `for` 延迟、触发注释和阈值边界，包括 Collector 与 Tempo 目标不可用。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
+Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖当前 10 条规则的 `for` 延迟、触发注释和阈值边界，包括 Collector 与 Tempo 目标不可用、Worker JVM Heap 超过池上限汇总 85% 并持续 5 分钟；Heap 指标不代表容器 RSS 或 cgroup/native 内存。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
 
 ## 工具与分层
 
@@ -168,13 +170,19 @@ Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kus
 
 运行全部单元及集成测试（包含临时 PostgreSQL 与 Collector Testcontainers，需要 Docker）：
 
-    mvn test
+    mvn --batch-mode --no-transfer-progress clean verify
+
+macOS 使用 Colima 时，需显式提供 Docker socket，并让 Ryuk 在 Linux VM 内挂载正确的 socket；否则 Testcontainers 可能将集成测试标记为跳过：
+
+    DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" \
+    TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+    mvn --batch-mode --no-transfer-progress clean verify
 
 只运行 Workflow 评测及持久化恢复样例：
 
     mvn -Dtest=AgentWorkflowEvaluationTest,FileCheckpointRecoveryTest,JsonFileRunStoreTest test
 
-PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers 启动临时容器；完整覆盖需要可用的 Docker 环境。没有 Docker 时，Testcontainers 集成测试会按配置跳过；CI 使用 Docker-enabled runner。
+PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers 启动临时容器；完整覆盖需要可用的 Docker 环境。没有 Docker 时，Testcontainers 集成测试会按配置跳过；CI 使用 Docker-enabled runner。验证时同时检查 Surefire 汇总中的 skipped 数，确保需要运行的集成测试没有因环境探测问题被跳过。
 
 样例使用 Fake ModelClient、Fake/In-memory Store 和确定性工具，不读取真实 API Key，不访问真实模型。覆盖普通回答、模型可重试错误、工具调用预算、工具执行失败、任务 Deadline、取消、工具超时未知状态、PENDING 工具恢复、IN_PROGRESS 工具不重放，以及 JSON 文件存取和重启后恢复。断言检查最终状态/文本、工具类别和次数、步骤耗时/用量字段、是否恢复及失败类别。
 
@@ -191,12 +199,12 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。配置 `requiredAnswerPhrases` / `forbiddenAnswerPhrases` 的场景会按大小写敏感的子串匹配检查回答，并把 `answerAssertionsMatched` 写入受限报告；没有配置断言时该字段为 `null`。它只验证明确写出的短语条件，不替代人工语义质量评审。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准包括任务成功、工具选择、可选的协作计划及已配置的回答短语断言，不代表回答整体质量已经达标。2026-11-12 的真实模型报告中，时间查询样例调用了真实 Java 系统时钟，但回答误称其为模拟数据；工具结果来源元数据和 v2 回答短语断言已补充。2026-11-14 使用 DeepSeek Flash 对 v2 五个样例重新评测，5/5 通过，完成 9 次模型调用与 3 次工具调用，记录 4,447 个输入 Token、406 个输出 Token；时区样例的回答断言匹配。费用未知（未配置单价），人工评分仍为空；该小型评测不证明一般回答质量。
 
-报告包含模型回答，POSIX 文件系统上使用权限为 0700 的独立目录和 0600 的文件；默认写入已加入 Git 忽略规则的 `var/agent-evaluations`，不会被 `mvn clean` 删除。如果在只读容器中运行，需要把 `AGENT_EVAL_REPORT_DIRECTORY` 指向一个专用可写挂载点。评测数据中的用户提示会写入 PostgreSQL Run 历史，执行前应确认数据库保留策略适用。该入口不读取 Fake/Mock ModelClient，也不把真实评测加入 CI。
+报告包含模型回答，POSIX 文件系统上使用权限为 0700 的独立目录和 0600 的文件；默认写入已加入 Git 和 Docker build context 忽略规则的 `var/agent-evaluations`，不会被 `mvn clean` 删除。`.gitignore` 与 `.dockerignore` 还排除常见证书/密钥扩展名、Java keystore、Kubernetes 配置以及 `.kube/`、`.ssh/` 目录。如果在只读容器中运行，需要把 `AGENT_EVAL_REPORT_DIRECTORY` 指向一个专用可写挂载点。评测数据中的用户提示会写入 PostgreSQL Run 历史，执行前应确认数据库保留策略适用。该入口不读取 Fake/Mock ModelClient，也不把真实评测加入 CI。
 
-## CI 安全扫描
+## CI 凭据与镜像扫描
 
-GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；构建应用和模型出站代理镜像后，Trivy 会阻止存在可修复 HIGH/CRITICAL 漏洞的镜像，并检查仓库中的 Docker/Kubernetes 配置 HIGH/CRITICAL 问题。两个 Dockerfile 的基础镜像均固定到多架构 OCI manifest digest，Dependabot 每周检查根目录、`ops/` 中的 Dockerfile 基础镜像，以及 `deploy/k8s/base/` 中 Kubernetes 清单引用的镜像标签。Dependabot 仅创建待审阅的更新 PR，不会自动部署；合并前仍需审阅摘要变化并通过 CI 镜像扫描。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
+GitHub Actions 在完整 Git 历史上运行 Gitleaks 凭据扫描；应用 Runtime 镜像的 HIGH/CRITICAL 漏洞扫描仍阻断 CI，仓库 Docker/Kubernetes 配置的 HIGH/CRITICAL 错误也阻断 CI。模型出站代理镜像的 Trivy 扫描保留并输出结果，但按项目当前范围不因中间件镜像 CVE 阻断功能验证或 GHCR 发布。该策略不表示扫描发现已修复或系统通过安全认证。两个 Dockerfile 的基础镜像均固定到多架构 OCI manifest digest，Dependabot 每周检查根目录、`ops/` 中的 Dockerfile 基础镜像，以及 `deploy/k8s/base/` 中 Kubernetes 清单引用的镜像标签。Dependabot 仅创建待审阅的更新 PR，不会自动部署；审阅更新时仍需检查摘要和功能测试结果。应用依赖管理显式覆盖 Jackson BOM 2.22.3、HttpCore 5.4.4 和 PostgreSQL JDBC 42.7.14；应用镜像构建升级 Ubuntu 安全更新并移除不使用的 `pebble`。扫描不会输出密钥内容。此处只说明流水线策略；远端 CI 结果以实际运行记录为准。短期 HTTP API 与生产认证授权不在支持范围内，相关身份行为使用 Mock 进行测试，不作为生产认证能力。
 
 CI 在 Java 构建前还会运行 Actionlint 检查 GitHub Actions 工作流语法和常见配置错误。Actionlint 固定为 v1.7.12 Linux amd64，并校验官方发布归档 SHA-256 后才执行；本地也可下载相同版本检查：`actionlint -color .github/workflows/ci.yml`。远端工作流仍需在获准推送后由 GitHub Actions 实际运行验收。
 
-本地 Maven 构建、Prometheus 告警规则与 L5 部署契约的最近验收记录，见[企业升级路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 镜像有一项未修复 HIGH（CVE-2026-78661），按用户决定继续保留该版本。
+本地 Maven 构建、Prometheus 告警规则与 L5 部署契约的最近验收记录，见[企业升级路线图实施状态](docs/architecture/enterprise-migration-roadmap.md#6-实施状态与剩余交付)。GitHub Actions 远端流水线尚未运行；用户暂缓远程推送，待后续授权再验收。Prometheus v3.16.0 按用户决定继续保留。

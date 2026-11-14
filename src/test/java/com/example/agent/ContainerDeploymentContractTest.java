@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,11 +35,11 @@ class ContainerDeploymentContractTest {
         String tempo = Files.readString(Path.of("deploy/k8s/base/tempo.yaml"));
         String grafana = Files.readString(Path.of("deploy/k8s/base/grafana.yaml"));
 
-        assertTrue(postgres.contains("image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"));
-        assertTrue(foundation.contains("image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea"));
-        assertTrue(foundation.contains("image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06"));
-        assertTrue(tempo.contains("image: grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38"));
-        assertTrue(grafana.contains("image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e"));
+        assertTrue(postgres.contains("image: postgres:16.15-alpine@sha256:ac838714b7d794185a866e5a6b479b954e7d8a070568aa0acac6fe07c3070bf5"));
+        assertTrue(foundation.contains("image: otel/opentelemetry-collector-contrib:0.165.0@sha256:bda8c1d727effc2f937d2a3470ea3f9ee189b8dd96d2385a2475b0b6f16ec3f8"));
+        assertTrue(foundation.contains("image: prom/prometheus:v3.16.0@sha256:89c1a644817e9ad70fa2af76c84898e327c1de7063735f962e8313b1e28672c3"));
+        assertTrue(tempo.contains("image: grafana/tempo:2.10.10@sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867"));
+        assertTrue(grafana.contains("image: grafana/grafana:12.4.15@sha256:e8e2751f6d838529b13c5f876791404d0e2c35171f9638ee3ae56835e34226a9"));
     }
 
     @Test
@@ -53,7 +54,30 @@ class ContainerDeploymentContractTest {
         assertTrue(dockerfile.contains("COPY eval/scenarios-v2.json /app/eval/scenarios-v2.json"));
         assertFalse(dockerfile.contains("COPY . ."));
         assertTrue(ignore.contains("deepseek.key"));
+        assertTrue(ignore.contains("*.key"));
+        assertTrue(ignore.contains("*.pem"));
+        assertTrue(ignore.contains("*.crt"));
+        assertTrue(ignore.contains("*.csr"));
+        assertTrue(ignore.contains("*.srl"));
+        assertTrue(ignore.contains("*.p12"));
+        assertTrue(ignore.contains("*.pfx"));
+        assertTrue(ignore.contains("*.jks"));
+        assertTrue(ignore.contains("*.keystore"));
+        assertTrue(ignore.contains("*.kubeconfig"));
+        assertTrue(ignore.contains(".kube/"));
+        assertTrue(ignore.contains(".ssh/"));
         assertTrue(ignore.contains(".env"));
+        assertTrue(ignore.contains("/.agent-runs/"));
+        assertTrue(ignore.contains("/var/agent-evaluations/"));
+        assertTrue(ignore.contains("/data/"));
+        assertTrue(ignore.contains("/runtime-data/"));
+        assertTrue(gitignore.contains("*.p12"));
+        assertTrue(gitignore.contains("*.pfx"));
+        assertTrue(gitignore.contains("*.jks"));
+        assertTrue(gitignore.contains("*.keystore"));
+        assertTrue(gitignore.contains("*.kubeconfig"));
+        assertTrue(gitignore.contains(".kube/"));
+        assertTrue(gitignore.contains(".ssh/"));
         assertFalse(ignore.contains("backup"));
         assertFalse(ignore.contains("*.dump.age"));
         assertFalse(gitignore.contains("backup"));
@@ -85,6 +109,7 @@ class ContainerDeploymentContractTest {
     @Test
     void workerDeploymentUsesPostgresCoordinationAndBoundedReplicaResources() throws Exception {
         String manifest = Files.readString(Path.of("deploy/k8s/base/agent-worker-deployment.yaml"));
+        String l5Overlay = Files.readString(Path.of("deploy/overlays/l5/kustomization.yaml"));
 
         assertTrue(manifest.contains("kind: Deployment"));
         assertTrue(manifest.contains("replicas: 2"));
@@ -109,6 +134,36 @@ class ContainerDeploymentContractTest {
         assertTrue(manifest.contains("fieldPath: metadata.name"));
         assertFalse(manifest.contains("httpGet:"));
         assertProviderCredentialIsMountedAsReadOnlyFile(manifest);
+        String normalizedL5Overlay = l5Overlay.replaceAll("(?m)^\\s+", "");
+        assertTrue(normalizedL5Overlay.contains("""
+                - name: agent-worker
+                resources:
+                requests:
+                memory: 512Mi
+                limits:
+                memory: 1Gi
+                """), "L5 worker memory budget must be bounded for the single-node allocatable memory");
+    }
+
+    @Test
+    void kubernetesRunsExplicitlyDisableRunRetentionCleanup() throws Exception {
+        String runtime = Files.readString(Path.of("deploy/k8s/base/l5-postgres.yaml"));
+        String worker = Files.readString(Path.of("deploy/k8s/base/agent-worker-deployment.yaml"));
+        String taskJob = Files.readString(Path.of("deploy/k8s/base/agent-task-job.yaml"));
+
+        assertTrue(runtime.replaceAll("(?m)^\\s+", "").contains("run-retention-period: PT0S"));
+        String retentionEnv = """
+                - name: AGENT_RUN_RETENTION_PERIOD
+                  valueFrom:
+                    configMapKeyRef:
+                      name: myai-runtime
+                      key: run-retention-period
+                """;
+        String normalizedRetentionEnv = retentionEnv.replaceAll("(?m)^\\s+", "");
+        assertTrue(worker.replaceAll("(?m)^\\s+", "").contains(normalizedRetentionEnv),
+                "Workers must use the centrally configured retention period");
+        assertTrue(taskJob.replaceAll("(?m)^\\s+", "").contains(normalizedRetentionEnv),
+                "One-off Jobs must use the centrally configured retention period");
     }
 
     @Test
@@ -126,6 +181,10 @@ class ContainerDeploymentContractTest {
         assertTrue(rules.contains("AgentWorkerTelemetryMissing"));
         assertTrue(rules.contains("absent(myai_agent_worker_queue_depth_runs)"));
         assertTrue(rules.contains("AgentWorkerInstanceMissing"));
+        assertTrue(rules.contains("AgentWorkerHeapNearLimit"));
+        assertTrue(rules.contains("myai_jvm_memory_used_bytes{area=\"heap\"}"));
+        assertTrue(rules.contains("myai_jvm_memory_max_bytes{area=\"heap\"}"));
+        assertTrue(rules.contains("this metric excludes native and container memory"));
         assertTrue(rules.contains("count(myai_agent_worker_poll_heartbeat_total"));
         assertTrue(rules.contains("myai_agent_worker_run_failed_recent_runs"));
         assertTrue(rules.contains("myai_hikaricp_connections_active"));
@@ -174,13 +233,13 @@ class ContainerDeploymentContractTest {
 
         assertTrue(kustomization.contains("base/tempo.yaml"));
         assertTrue(kustomization.contains("base/grafana.yaml"));
-        assertTrue(tempo.contains("grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38"));
+        assertTrue(tempo.contains("grafana/tempo:2.10.10@sha256:2cd56a993318ae307f58289ebc89ae6cb5edc7e82c069371fd5225c393aca867"));
         assertTrue(tempo.contains("--target=all"));
         assertTrue(tempo.contains("type: Recreate"));
         assertTrue(tempoConfig.contains("backend: local"));
         assertTrue(tempo.contains("configMap:\n            name: myai-tempo"));
         assertTrue(tempoConfig.contains("query_frontend:\n  search:\n    max_result_limit: 262144"),
-                "Tempo must explicitly cap search result limits to mitigate CVE-2026-21728");
+                "Tempo search results must have a configured upper bound");
         assertTrue(tempoConfig.contains("block_retention: 168h"));
         assertTrue(kustomization.contains("namespace: myai"));
         assertTrue(kustomization.contains("- name: myai-tempo\n    files:\n      - config.yaml=base/tempo-config.yaml"),
@@ -188,7 +247,7 @@ class ContainerDeploymentContractTest {
         assertTrue(tempo.contains("name: myai-tempo-data"));
         assertTrue(tempo.contains("storage: 10Gi"));
         assertTrue(tempo.contains("type: ClusterIP"));
-        assertTrue(grafana.contains("grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e"));
+        assertTrue(grafana.contains("grafana/grafana:12.4.15@sha256:e8e2751f6d838529b13c5f876791404d0e2c35171f9638ee3ae56835e34226a9"));
         assertTrue(grafana.contains("type: Recreate"));
         assertTrue(grafana.contains("name: GF_AUTH_ANONYMOUS_ENABLED"));
         assertTrue(grafana.contains("value: \"false\""));
@@ -364,7 +423,7 @@ class ContainerDeploymentContractTest {
     }
 
     @Test
-    void containerImagesArePublishedOnlyAfterVerificationAndVulnerabilityScans() throws Exception {
+    void middlewareImageVulnerabilitiesAreInformationalAndRuntimeImageScanRemainsBlocking() throws Exception {
         String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
 
         assertTrue(workflow.contains("publish-images:"));
@@ -378,11 +437,33 @@ class ContainerDeploymentContractTest {
         assertTrue(workflow.contains("org.opencontainers.image.source"));
         assertTrue(workflow.contains("org.opencontainers.image.revision"));
         assertFalse(workflow.contains(":latest"));
+        assertWorkflowStepExitCode(workflow, "Scan runtime image for HIGH and CRITICAL", "1", 2);
+        assertWorkflowStepExitCode(workflow, "Scan model egress proxy image for HIGH and CRITICAL", "0", 2);
+        assertWorkflowStepExitCode(workflow, "Scan repository configuration", "1", 1);
         String publishJob = workflow.substring(workflow.indexOf("publish-images:"));
         assertTrue(publishJob.indexOf("Scan runtime image") < publishJob.lastIndexOf("docker push"));
         assertTrue(publishJob.indexOf("Scan model egress proxy image") < publishJob.lastIndexOf("docker push"));
         assertFalse(workflow.contains("backup"));
         assertFalse(workflow.contains("kube-state-metrics"));
+    }
+
+    private static void assertWorkflowStepExitCode(String workflow, String stepName, String expectedExitCode,
+                                                   int expectedOccurrences) {
+        String marker = "      - name: " + stepName;
+        int offset = 0;
+        int occurrences = 0;
+        while ((offset = workflow.indexOf(marker, offset)) >= 0) {
+            int nextStep = workflow.indexOf("\n      - name:", offset + marker.length());
+            String step = workflow.substring(offset, nextStep < 0 ? workflow.length() : nextStep);
+            assertTrue(step.contains("exit-code: '" + expectedExitCode + "'"),
+                    stepName + " must use the configured project gate policy");
+            String unexpectedExitCode = "1".equals(expectedExitCode) ? "0" : "1";
+            assertFalse(step.contains("exit-code: '" + unexpectedExitCode + "'"),
+                    stepName + " must not contradict its configured project gate policy");
+            occurrences++;
+            offset += marker.length();
+        }
+        assertEquals(expectedOccurrences, occurrences, stepName + " must appear the expected number of times");
     }
 
     @Test

@@ -14,6 +14,7 @@ data:
   database-url: jdbc:postgresql://myai-postgres:5432/myai?sslmode=verify-full&sslrootcert=/var/run/secrets/database-ca/ca.crt
   database-username: myai
   application-name: myai-agent-runtime
+  run-retention-period: PT0S
   model-base-url: https://api.deepseek.com
   model-proxy-url: http://myai-model-egress-proxy:3128
 ---
@@ -73,7 +74,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: initialize-data-permissions
-          image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+          image: postgres:16.15-alpine@sha256:ac838714b7d794185a866e5a6b479b954e7d8a070568aa0acac6fe07c3070bf5
           command: [sh, -ec, 'mkdir -p /var/lib/postgresql/data/pgdata /var/run/postgresql && chown -R 999:999 /var/lib/postgresql/data /var/run/postgresql']
           securityContext:
             runAsNonRoot: false
@@ -92,7 +93,7 @@ spec:
             - name: tmp
               mountPath: /tmp
         - name: prepare-tls-key
-          image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+          image: postgres:16.15-alpine@sha256:ac838714b7d794185a866e5a6b479b954e7d8a070568aa0acac6fe07c3070bf5
           command: [sh, -ec, 'cp /tls-input/tls.crt /tls-ready/tls.crt && cp /tls-input/tls.key /tls-ready/tls.key && chown 999:999 /tls-ready/tls.key && chmod 0600 /tls-ready/tls.key && chmod 0644 /tls-ready/tls.crt']
           securityContext:
             runAsNonRoot: false
@@ -109,7 +110,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
       containers:
         - name: postgres
-          image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+          image: postgres:16.15-alpine@sha256:ac838714b7d794185a866e5a6b479b954e7d8a070568aa0acac6fe07c3070bf5
           imagePullPolicy: IfNotPresent
           # The permission initContainer prepares the dedicated PVC; the database process itself runs as UID 999.
           ports:

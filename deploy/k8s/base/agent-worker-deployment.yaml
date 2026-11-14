@@ -41,6 +41,11 @@ spec:
           env:
             - name: AGENT_EXECUTION_MODE
               value: worker
+            - name: AGENT_RUN_RETENTION_PERIOD
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: run-retention-period
             - name: AGENT_WORKER_EXPECTED_INSTANCES
               value: "2"
             - name: MYAI_WORKER_INSTANCE_ID

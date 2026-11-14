@@ -7,12 +7,12 @@
 最近核对时间：2026-11-14。
 
 - 单节点 K3s：节点故障会同时影响 Worker、PostgreSQL 和监控；当前不具备节点级高可用或异地恢复能力。
-- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261114-worker-instance`（2026-11-14 更新，2/2 Ready、0 次重启）；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、Tempo、Grafana 各 1 副本。
-- 2026-11-14 发现先前源码中的 PostgreSQL、OTel Collector、Prometheus、Tempo 和 Grafana digest 只是与 L5 containerd 本地引用一致，并非公开 Registry 可解析的 manifest。当前源码已改用 Registry manifest index digest，并加入 `bash ops/tests/image-digests-test.sh` 校验；L5 仍运行旧缓存镜像，Pod Ready。节点直接拉取 Docker Hub 超时，因此目前不要将新 overlay 应用到 L5；需先通过可用的镜像传输路径导入对应镜像，再分批更新并核对 imageID。PostgreSQL 保持 16.15，避免借修正 digest 顺带升级数据库版本；Prometheus v3.16.0 保持项目既定决策。
-- Worker 通过 OTel Collector 将 Trace 写入 Tempo，Grafana 提供内部查询入口。2026-11-14 验收时 Tempo/Grafana 均 1/1 Ready；合成 Trace 从 Collector OTLP HTTP 接收（200）到 Tempo Trace ID 查询（200），Grafana Tempo 数据源健康检查为 `OK`。同日受控故障演练中，Tempo 暂停期间 Collector 接受一条合成 Trace；Collector 随后在 Tempo 仍暂停时重启，Tempo 恢复后 Trace ID 查询返回 1 个 span。此结果只证明该次进程重启和短暂后端不可用场景下的队列恢复，不证明节点/磁盘故障恢复或零丢失。Trace resource 标记 `deployment.environment.name=l5`；Prometheus 对 Collector 和 Tempo 的活动抓取目标带 `environment=l5`。Tempo 使用单副本、10 GiB `local-path` PVC、保留 7 天，并显式设置 `query_frontend.search.max_result_limit=262144`；2026-11-14 已验证运行时配置包含该限制且 `/ready` 返回 200。该限制用于约束搜索结果规模，是 CVE-2026-21728 相关的缓解配置，不会消除 Grafana bundled Tempo datasource 的漏洞扫描发现，也不等于升级到修复版本。Grafana 使用临时本地数据目录，仪表盘/用户状态在 Pod 重建后不保证保留。Collector 文件发送队列为 1 GiB，本地持久化，单批发送重试窗口最长 1 小时。首次部署期间超过原 5 分钟重试窗口的少量 Trace 已被 Collector 丢弃，无法恢复。PVC 不能承受 L5 单节点/磁盘损坏；没有备份或异地恢复。Grafana/Tempo 仅为 ClusterIP，不对集群外开放；Grafana 匿名访问关闭。
+- Worker 2 副本，当前镜像为 `docker.io/library/myai-agent:l5-20261114-runtime-current`（基于完整 Dockerfile 镜像添加当前应用 JAR 层；manifest `sha256:0ce43b84944beac5d2895e1f7760d895680e151ed4cebb489ae64ce64edd7378`、imageID `sha256:2a96238b72f79da559e8770815a70f5ac95eec8ea500bcc81c6bfda8e141eaa3`；2/2 Ready、0 次重启；Pod 内 JAR SHA-256 与当前本地构建产物一致）；模型出站经 Squid 代理，只允许 `api.deepseek.com:443`。PostgreSQL、Collector、Prometheus、Tempo、Grafana 各 1 副本。
+- 2026-11-14 发现先前源码中的 PostgreSQL、OTel Collector、Prometheus、Tempo 和 Grafana digest 只是与 L5 containerd 本地引用一致，并非公开 Registry 可解析的 manifest。当前源码固定 Registry 的 `linux/amd64` 平台 manifest digest，并由 `bash ops/tests/image-digests-test.sh` 校验。L5 节点无法直接访问 Docker Hub；镜像经 OCI 归档导入并核对后，Grafana、Tempo、PostgreSQL 已按服务滚动，Collector 与 Prometheus 原有 imageID 已匹配。应用清单时必须使用 `deploy/overlays/l5`，通用 `deploy/k8s` 含有占位 Worker/代理镜像。PostgreSQL 仍为 16.15，数据 PVC 未变；Prometheus v3.16.0 按项目决定维持不变。
+- Worker 通过 OTel Collector 将 Trace 写入 Tempo，Grafana 提供内部查询入口。2026-11-14 验收时 Tempo/Grafana 均 1/1 Ready；合成 Trace 从 Collector OTLP HTTP 接收（200）到 Tempo Trace ID 查询（200），Grafana Tempo 数据源健康检查为 `OK`。同日受控故障演练中，Tempo 暂停期间 Collector 接受一条合成 Trace；Collector 随后在 Tempo 仍暂停时重启，Tempo 恢复后 Trace ID 查询返回 1 个 span。此结果只证明该次进程重启和短暂后端不可用场景下的队列恢复，不证明节点/磁盘故障恢复或零丢失。Trace resource 标记 `deployment.environment.name=l5`；Prometheus 对 Collector 和 Tempo 的活动抓取目标带 `environment=l5`。Tempo 使用单副本、10 GiB `local-path` PVC、保留 7 天，并显式设置 `query_frontend.search.max_result_limit=262144`；2026-11-14 已验证运行时配置包含该限制且 `/ready` 返回 200。Grafana 使用临时本地数据目录，仪表盘/用户状态在 Pod 重建后不保证保留。Collector 文件发送队列为 1 GiB，本地持久化，单批发送重试窗口最长 1 小时。首次部署期间超过原 5 分钟重试窗口的少量 Trace 已被 Collector 丢弃，无法恢复。PVC 不能承受 L5 单节点/磁盘损坏；没有备份或异地恢复。Grafana/Tempo 仅为 ClusterIP，不对集群外开放；Grafana 匿名访问关闭。
 - PostgreSQL 16 使用 5 GiB `local-path` PVC。当前没有数据库备份与恢复流程；卷或节点损坏可能导致 Run 与检查点丢失。CA 签名私钥托管尚未建设。
-- Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变，已知 HIGH CVE-2026-78661 风险见升级路线图。
-- 2026-11-14 使用 Trivy v0.76.1 对公开 Registry 的 linux/amd64 镜像按版本扫描（`--image-src remote --platform linux/amd64 --severity HIGH,CRITICAL --ignore-unfixed`；Vulnerability DB 为 2026-11-13 00:58 UTC、Java DB 为 2026-11-12 00:58 UTC）：PostgreSQL 16.15 Alpine 报告 45 个可修复 HIGH/CRITICAL，其中 1 个 CRITICAL（CVE-2025-68121，位于 gosu 内嵌 Go 1.24.6）；OTel Collector 0 个；Prometheus v3.16.0 有 2 个 HIGH，均为 CVE-2026-78661；Tempo 2.10.10 有 2 个 HIGH：CVE-2026-116587（go-jose 4.1.4，修复版本 4.1.6）及 CVE-2026-78661（x/net 0.60.0，修复版本 0.62.0）；Grafana 12.4.15 有 2 个 HIGH：CVE-2026-21728 与 CVE-2026-28377，均来自 bundled Tempo datasource 依赖。此扫描针对可由 Registry 拉取的指定版本，不证明 L5 中旧 digest 的内容完全相同，且使用缓存漏洞库。另对候选 Tempo 3.1.1 扫描仍见上述两项 HIGH；Grafana 13.3.1 报告 20 个 HIGH/CRITICAL，因此没有仅为版本号升级现有服务。Prometheus 版本按用户决定保持不变。当前可观测性服务仅集群内部可达、Grafana 登录开启、Tempo 搜索结果上限受控，这些是暴露面限制，不等于漏洞修复或生产安全验收。生产使用前需要选取经过扫描并确认相关依赖已修复的镜像，或由风险责任人明确接受剩余风险。
+- Prometheus v3.16.0 使用 7 天本地时序保留；版本按项目决策维持不变。
+- 中间件镜像 CVE 按项目约束不作为当前功能验收项；不安排因此产生的版本升级或自维护派生镜像。PostgreSQL 16.15、Prometheus v3.16.0、Tempo 2.10.10、Grafana 12.4.15 按当前部署继续运行；既有 Trivy 扫描数据仅作历史信息记录，不代表漏洞已修复或安全认证。
 - Run 自动清理保持关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。不要手工删除 Run、消息、步骤或租约记录。
 
 Grafana ClusterIP 内部提供 MyAI Runtime Overview 仪表盘（uid `myai-runtime-overview`），显示可恢复 Run 队列、最老等待、过期租约、近 5 分钟失败 Run、数据库连接池使用率、Collector 和 Tempo 可用性（共 7 个面板）。只读查看方式：
@@ -81,7 +81,7 @@ kubectl --context "$CTX" -n "$NS" exec "$PROM_POD" -- \
   wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-当前 9 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟、Worker 轮询失败计数在 5 分钟内增加并持续 1 分钟，以及 Worker 队列深度指标持续缺失 2 分钟、Worker 成功轮询心跳副本数低于期望副本数并持续 2 分钟。Worker 轮询失败只记录无标签计数，不记录异常正文；队列深度指标缺失告警可发现整个 Worker 指标链路中断；副本数告警通过 OTLP `service.instance.id` 生成 `service_instance_id` 标签区分 Pod。Collector 对指标序列保留 5 分钟，副本退出后该告警通常约 7 分钟后触发；这不是即时探活。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
+当前 10 条规则覆盖 Collector/Tempo 抓取目标不可用、队列等待超过 300 秒并持续 5 分钟、过期租约持续 2 分钟、5 分钟窗口内有失败 Run 且持续 1 分钟、数据库连接池使用率超过 90% 并持续 5 分钟、Worker JVM Heap 使用量占上限汇总超过 85% 并持续 5 分钟、Worker 轮询失败计数在 5 分钟内增加并持续 1 分钟，以及 Worker 队列深度指标持续缺失 2 分钟、Worker 成功轮询心跳副本数低于期望副本数并持续 2 分钟。Heap 告警按 `service_instance_id` 区分 Worker；它不等同于容器 RSS 或 cgroup 内存，也不覆盖 JVM native 内存。Worker 轮询失败只记录无标签计数，不记录异常正文；队列深度指标缺失告警可发现整个 Worker 指标链路中断；副本数告警通过 OTLP `service.instance.id` 生成 `service_instance_id` 标签区分 Pod。Collector 对指标序列保留 5 分钟，副本退出后该告警通常约 7 分钟后触发；这不是即时探活。Tempo target down 告警在 `up{job="myai-tempo"} == 0` 持续 2 分钟后触发。规则细节以 [告警配置](../../deploy/k8s/base/agent-alerts.yaml) 为准；Kustomize 从该文件生成 Prometheus ConfigMap。告警只保存在 Prometheus；没有外部通知路径。
 
 ## 4. 常见故障处理
 
@@ -171,7 +171,7 @@ kubectl --context "$CTX" -n "$NS" rollout status deploy/myai-agent-worker --time
 kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 ```
 
-确认 Worker 2/2 Ready、镜像与 overlay 一致，PostgreSQL/Collector/Prometheus/代理均 Ready，再允许提交新 Run。回滚应用版本不会撤销数据库迁移；若旧镜像不兼容当前 schema，必须停止回滚并走数据库恢复/向前修复评估。
+确认 Worker 2/2 Ready、镜像与 overlay 一致，PostgreSQL/Collector/Prometheus/代理均 Ready，再允许提交新 Run。回滚应用版本不会撤销数据库迁移；若旧镜像不兼容当前 schema，必须停止回滚并评估向前修复。当前没有数据库备份/恢复能力，不能把数据库恢复当作回滚步骤。
 
 ## 6. 验收与限制
 
@@ -181,8 +181,10 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 
   ```bash
   export DOCKER_HOST="${DOCKER_HOST:-unix://${HOME}/.colima/default/docker.sock}"
-  export TESTCONTAINERS_RYUK_DISABLED=true
+  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
   mvn --batch-mode --no-transfer-progress clean verify
   ```
+
+  保持 Testcontainers Ryuk 清理容器启用；socket override 让 Ryuk 在 Colima Linux VM 内挂载正确的 Docker socket。构建后检查 Surefire 汇总的 skipped 数，避免 Docker 探测问题让集成测试静默跳过。
 - Tempo Trace 保留期限当前为 7 天，使用同节点本地 PVC；Collector 磁盘队列及 Tempo 查询链路已完成一次合成数据验收。数据库与 Trace 均无备份能力；节点或磁盘故障可造成不可恢复的数据丢失。RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
 - 当前不提供 PostgreSQL 备份/恢复能力。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。

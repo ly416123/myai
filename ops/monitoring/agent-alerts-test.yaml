@@ -28,6 +28,10 @@ tests:
         values: "1+1x20"
       - series: 'myai_agent_worker_instances_expected{worker_type="run"}'
         values: "2+0x20"
+      - series: 'myai_jvm_memory_used_bytes{area="heap",service_instance_id="worker-memory-a"}'
+        values: "86+0x20"
+      - series: 'myai_jvm_memory_max_bytes{area="heap",service_instance_id="worker-memory-a"}'
+        values: "100+0x20"
       - series: myai_hikaricp_connections_active
         values: "10+0x20"
       - series: myai_hikaricp_connections_max
@@ -53,6 +57,9 @@ tests:
         exp_alerts: []
       - eval_time: 30s
         alertname: AgentWorkerPollingFailures
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: AgentWorkerHeapNearLimit
         exp_alerts: []
       - eval_time: 2m
         alertname: MyAiCollectorTargetDown
@@ -103,6 +110,15 @@ tests:
             exp_annotations:
               summary: Agent database connection pool is near capacity
               description: Review worker concurrency and database pool sizing.
+      - eval_time: 6m
+        alertname: AgentWorkerHeapNearLimit
+        exp_alerts:
+          - exp_labels:
+              service_instance_id: worker-memory-a
+              severity: warning
+            exp_annotations:
+              summary: Agent Worker JVM heap remains above 85% of its maximum
+              description: Check Run payload sizes and heap use; this metric excludes native and container memory.
       - eval_time: 2m
         alertname: AgentWorkerPollingFailures
         exp_alerts:
@@ -132,6 +148,10 @@ tests:
         values: "0+0x20"
       - series: myai_agent_worker_poll_failures_total
         values: "0+0x20"
+      - series: 'myai_jvm_memory_used_bytes{area="heap",service_instance_id="worker-memory-a"}'
+        values: "85+0x20"
+      - series: 'myai_jvm_memory_max_bytes{area="heap",service_instance_id="worker-memory-a"}'
+        values: "100+0x20"
       - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-a"}'
         values: "1+1x20"
       - series: 'myai_agent_worker_poll_heartbeat_total{worker_type="run",service_instance_id="worker-b"}'
@@ -163,6 +183,9 @@ tests:
         exp_alerts: []
       - eval_time: 10m
         alertname: AgentWorkerPollingFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentWorkerHeapNearLimit
         exp_alerts: []
       - eval_time: 10m
         alertname: AgentWorkerTelemetryMissing

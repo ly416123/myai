@@ -8,6 +8,8 @@ python3 - <<'PY'
 import re
 import subprocess
 import sys
+import hashlib
+import json
 from pathlib import Path
 
 expected_repositories = {
@@ -51,7 +53,7 @@ for image, pinned_digests in images.items():
         continue
 
     result = subprocess.run(
-        ["docker", "buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", image],
+        ["docker", "buildx", "imagetools", "inspect", "--raw", image],
         check=False,
         capture_output=True,
         text=True,
@@ -61,15 +63,37 @@ for image, pinned_digests in images.items():
         failed = True
         continue
 
-    registry_digest = result.stdout.strip()
+    try:
+        manifest = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"FAIL {image}: registry returned invalid manifest JSON")
+        failed = True
+        continue
+
+    descriptors = manifest.get("manifests")
+    if isinstance(descriptors, list):
+        platform_manifests = [
+            descriptor
+            for descriptor in descriptors
+            if descriptor.get("platform", {}).get("os") == "linux"
+            and descriptor.get("platform", {}).get("architecture") == "amd64"
+        ]
+        if len(platform_manifests) != 1:
+            print(f"FAIL {image}: expected exactly one linux/amd64 manifest, found {len(platform_manifests)}")
+            failed = True
+            continue
+        registry_digest = platform_manifests[0].get("digest", "")
+    else:
+        registry_digest = "sha256:" + hashlib.sha256(result.stdout.encode()).hexdigest()
+
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", registry_digest):
-        print(f"FAIL {image}: registry returned an invalid manifest digest")
+        print(f"FAIL {image}: registry returned an invalid linux/amd64 manifest digest")
         failed = True
         continue
 
     pinned_digest = next(iter(pinned_digests))
     if pinned_digest != registry_digest:
-        print(f"FAIL {image}: deployment pins {pinned_digest} but registry tag resolves to {registry_digest}")
+        print(f"FAIL {image}: deployment pins {pinned_digest} but linux/amd64 resolves to {registry_digest}")
         failed = True
     else:
         print(f"PASS {image} {registry_digest}")

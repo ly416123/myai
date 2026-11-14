@@ -6,7 +6,7 @@ resources:
 images:
   - name: registry.example.invalid/myai
     newName: docker.io/library/myai-agent
-    newTag: l5-20261114-worker-instance
+    newTag: l5-20261114-runtime-current
   - name: registry.example.invalid/myai-model-egress-proxy
     newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113
@@ -33,6 +33,11 @@ patches:
           spec:
             containers:
               - name: agent-worker
+                resources:
+                  requests:
+                    memory: 512Mi
+                  limits:
+                    memory: 1Gi
                 env:
                   - name: AGENT_WORKER_CONCURRENCY
                     value: "1"

@@ -77,6 +77,11 @@ public final class Main implements ApplicationRunner {
                     System.out.println();
                     continue;
                 }
+                if (input.equals("/tool-audit")) {
+                    System.out.println("用法：/tool-audit <runId>");
+                    System.out.println();
+                    continue;
+                }
                 if (input.startsWith("/tool-audit ")) {
                     try {
                         printToolAudit(toolAuditStore.findToolAudit(input.substring("/tool-audit ".length()).trim()));
@@ -97,6 +102,9 @@ public final class Main implements ApplicationRunner {
                         printQueuedRun(submissions.submitCollaborative(input.substring("/multi-enqueue ".length())));
                     } else if (input.startsWith("/multi ")) {
                         printRunResult(collaborative.runTracked(input.substring("/multi ".length()).trim()));
+                    } else if (input.startsWith("/")) {
+                        System.out.println("未知命令。支持 /runs、/tool-audit <runId>、/resume <runId>、"
+                                + "/multi <任务>、/enqueue <任务>、/multi-enqueue <任务>、/multi-resume <runId>、/exit。");
                     } else {
                         printRunResult(runtime.runTracked(input));
                     }

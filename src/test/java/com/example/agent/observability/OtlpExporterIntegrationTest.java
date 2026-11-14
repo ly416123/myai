@@ -66,9 +66,12 @@ class OtlpExporterIntegrationTest {
             "myai_agent_worker_poll_failures_total",
             "myai_agent_worker_poll_heartbeat_total",
             "myai_agent_worker_instances_expected",
+            "myai_jvm_memory_used_bytes",
+            "myai_jvm_memory_max_bytes",
             "myai_hikaricp_connections_active",
             "myai_hikaricp_connections_max");
-    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of("absent", "count", "increase", "max", "or", "sum", "time", "up");
+    private static final Set<String> SUPPORTED_PROMQL_SYMBOLS = Set.of(
+            "absent", "by", "count", "increase", "max", "or", "service_instance_id", "sum", "time", "up");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = PostgresTestContainerSupport.create();
@@ -178,11 +181,15 @@ class OtlpExporterIntegrationTest {
         }
         assertTrue(missingSamples.isEmpty(), () -> "Collector Prometheus output is missing alert samples "
                 + missingSamples + "; exported agent metrics: " + sampleNames.stream()
-                .filter(name -> name.startsWith("myai_agent_worker") || name.startsWith("myai_hikaricp_connections"))
+                .filter(name -> name.startsWith("myai_agent_worker") || name.startsWith("myai_jvm_memory")
+                        || name.startsWith("myai_hikaricp_connections"))
                 .sorted().toList());
         assertTrue(scrape.lines().anyMatch(line -> line.startsWith("myai_agent_worker_poll_heartbeat_total{")
                         && line.contains("service_instance_id=\"contract-test-worker\"")),
                 "Collector should preserve the configured worker instance resource attribute");
+        assertTrue(scrape.lines().anyMatch(line -> line.startsWith("myai_jvm_memory_used_bytes{")
+                        && line.contains("service_instance_id=\"contract-test-worker\"")),
+                "Collector should preserve the worker instance label for JVM memory alerting");
     }
 
     private static Set<String> prometheusSampleNames(String exposition) {

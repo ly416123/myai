@@ -469,7 +469,7 @@ public final class AgentRuntime implements AutoCloseable {
             persist(run);
             telemetry.finishStep(stepObservation, run.step(step.stepId()), "single");
             log.info("runId={} stepId={} kind=TOOL tool={} status={} failureCategory={} durationMs={} toolCall={}",
-                    run.runId(), step.stepId(), step.toolName(), status, result.failureCategory(),
+                    run.runId(), step.stepId(), registeredToolNameForLog(step.toolName()), status, result.failureCategory(),
                     Duration.between(startedAt, completedAt).toMillis(), run.toolCalls());
             if (Instant.now().isAfter(run.deadlineAt())) throw new WorkflowAbort(FailureCategory.TASK_DEADLINE);
             checkCancelled(run);
@@ -494,10 +494,17 @@ public final class AgentRuntime implements AutoCloseable {
                             "{\"error\":\"Previous execution outcome is unknown; tool was not replayed\"}"));
                 }
                 log.warn("runId={} stepId={} kind=TOOL tool={} recovery=not_replayed failureCategory={}",
-                        run.runId(), step.stepId(), step.toolName(), FailureCategory.TOOL_TIMEOUT_UNKNOWN);
+                        run.runId(), step.stepId(), registeredToolNameForLog(step.toolName()),
+                        FailureCategory.TOOL_TIMEOUT_UNKNOWN);
             }
             persist(run);
         }
+    }
+
+    /** Never emit a model-controlled unknown tool name into runtime logs. */
+    private String registeredToolNameForLog(String toolName) {
+        if (toolName == null) return "unknown";
+        return registry.find(toolName).map(tool -> tool.name()).orElse("unregistered");
     }
 
     private ToolCall findToolCall(List<Message> messages, String callId) {

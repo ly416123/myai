@@ -107,7 +107,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: collector
-          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
+          image: otel/opentelemetry-collector-contrib:0.165.0@sha256:bda8c1d727effc2f937d2a3470ea3f9ee189b8dd96d2385a2475b0b6f16ec3f8
           imagePullPolicy: IfNotPresent
           args: [--config=/etc/otelcol-contrib/config.yaml]
           ports:
@@ -218,7 +218,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: prometheus
-          image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+          image: prom/prometheus:v3.16.0@sha256:89c1a644817e9ad70fa2af76c84898e327c1de7063735f962e8313b1e28672c3
           imagePullPolicy: IfNotPresent
           args:
             - --config.file=/etc/prometheus/prometheus.yml

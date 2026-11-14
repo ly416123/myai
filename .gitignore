@@ -45,6 +45,17 @@ bin/
 *.crt
 *.csr
 *.srl
+*.p12
+*.pfx
+*.jks
+*.jceks
+*.keystore
+*.truststore
+*.kubeconfig
+id_rsa
+id_ed25519
+.kube/
+.ssh/
 
 # Local workflow checkpoints may contain conversation/tool context
 /.agent-runs/

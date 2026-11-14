@@ -81,3 +81,12 @@ groups:
         annotations:
           summary: One or more Agent Worker instances have stopped reporting
           description: Counter series expire from the collector after 5m; alert onset can lag worker loss by approximately 7m.
+
+      - alert: AgentWorkerHeapNearLimit
+        expr: sum by (service_instance_id) (myai_jvm_memory_used_bytes{area="heap"}) / sum by (service_instance_id) (myai_jvm_memory_max_bytes{area="heap"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent Worker JVM heap remains above 85% of its maximum
+          description: Check Run payload sizes and heap use; this metric excludes native and container memory.

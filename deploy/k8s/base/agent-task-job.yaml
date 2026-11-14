@@ -34,6 +34,11 @@ spec:
           env:
             - name: AGENT_EXECUTION_MODE
               value: once
+            - name: AGENT_RUN_RETENTION_PERIOD
+              valueFrom:
+                configMapKeyRef:
+                  name: myai-runtime
+                  key: run-retention-period
             - name: AGENT_TASK
               valueFrom:
                 secretKeyRef:

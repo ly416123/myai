@@ -11,9 +11,17 @@ import com.example.agent.evaluation.AgentEvaluationRunner;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class MainTest {
@@ -59,6 +67,52 @@ class MainTest {
                         mock(RunSubmissionService.class), runId -> java.util.List.of(), runner, evaluationConfig())
                 .run(new DefaultApplicationArguments(new String[0])));
         org.mockito.Mockito.verifyNoInteractions(runner);
+    }
+
+    @Test
+    void toolAuditCommandWithoutRunIdShowsUsageInsteadOfStartingAgentRun() throws Exception {
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        InputStream originalIn = System.in;
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (PrintStream capturedOut = new PrintStream(output, true, StandardCharsets.UTF_8)) {
+            System.setIn(new ByteArrayInputStream("/tool-audit\n/exit\n".getBytes(StandardCharsets.UTF_8)));
+            System.setOut(capturedOut);
+
+            new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
+                    mock(RunSubmissionService.class), runId -> java.util.List.of(),
+                    mock(AgentEvaluationRunner.class), evaluationConfig())
+                    .run(new DefaultApplicationArguments(new String[0]));
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("用法：/tool-audit <runId>"));
+        verifyNoInteractions(runtime);
+    }
+
+    @Test
+    void unknownSlashCommandIsRejectedInsteadOfStartingAgentRun() throws Exception {
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        InputStream originalIn = System.in;
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (PrintStream capturedOut = new PrintStream(output, true, StandardCharsets.UTF_8)) {
+            System.setIn(new ByteArrayInputStream("/unkown-command\n/exit\n".getBytes(StandardCharsets.UTF_8)));
+            System.setOut(capturedOut);
+
+            new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
+                    mock(RunSubmissionService.class), runId -> java.util.List.of(),
+                    mock(AgentEvaluationRunner.class), evaluationConfig())
+                    .run(new DefaultApplicationArguments(new String[0]));
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("未知命令"));
+        verifyNoInteractions(runtime);
     }
 
     private static AgentEvaluationConfig evaluationConfig() {

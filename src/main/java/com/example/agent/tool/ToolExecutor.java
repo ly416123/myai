@@ -67,18 +67,20 @@ public final class ToolExecutor implements AutoCloseable {
         java.util.Objects.requireNonNull(maxWait);
         var tool = registry.find(call.name());
         if (tool.isEmpty()) {
-            log.warn("runId={} stepId={} tool={} failureCategory={}",
-                    runId, stepId, call.name(), FailureCategory.TOOL_NOT_FOUND);
+            // The name is model-controlled when lookup fails and may contain user data.
+            log.warn("runId={} stepId={} tool=unregistered failureCategory={}",
+                    runId, stepId, FailureCategory.TOOL_NOT_FOUND);
             return ToolResult.failure(call.id(), call.name(), "Tool is not registered",
                     FailureCategory.TOOL_NOT_FOUND);
         }
         AgentTool target = tool.get();
+        String registeredToolName = target.name();
         Duration waitLimit = maxWait.compareTo(timeout) < 0 ? maxWait : timeout;
         Future<JsonNode> future = null;
         try {
             if (!inputSchemaValidator.isValid(target, call.arguments())) {
                 log.warn("runId={} stepId={} tool={} failureCategory={}",
-                        runId, stepId, call.name(), FailureCategory.TOOL_ARGUMENTS);
+                        runId, stepId, registeredToolName, FailureCategory.TOOL_ARGUMENTS);
                 return ToolResult.failure(call.id(), call.name(), "Tool arguments failed validation",
                         FailureCategory.TOOL_ARGUMENTS);
             }
@@ -88,25 +90,25 @@ public final class ToolExecutor implements AutoCloseable {
         } catch (TimeoutException e) {
             if (future != null) future.cancel(true);
             log.warn("runId={} stepId={} tool={} failureCategory={} durationMs={}",
-                    runId, stepId, call.name(), FailureCategory.TOOL_TIMEOUT_UNKNOWN, waitLimit.toMillis());
+                    runId, stepId, registeredToolName, FailureCategory.TOOL_TIMEOUT_UNKNOWN, waitLimit.toMillis());
             return ToolResult.indeterminate(call.id(), call.name(),
                     "Tool timed out; the outcome may be unknown and the call was not replayed");
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() == null ? e : e.getCause();
             log.warn("runId={} stepId={} tool={} failureCategory={} exceptionType={}",
-                    runId, stepId, call.name(), FailureCategory.TOOL_EXECUTION, cause.getClass().getSimpleName());
+                    runId, stepId, registeredToolName, FailureCategory.TOOL_EXECUTION, cause.getClass().getSimpleName());
             return ToolResult.failure(call.id(), call.name(), "Tool execution failed",
                     FailureCategory.TOOL_EXECUTION);
         } catch (InterruptedException interrupted) {
             if (future != null) future.cancel(true);
             Thread.currentThread().interrupt();
             log.warn("runId={} stepId={} tool={} failureCategory={}",
-                    runId, stepId, call.name(), FailureCategory.TOOL_TIMEOUT_UNKNOWN);
+                    runId, stepId, registeredToolName, FailureCategory.TOOL_TIMEOUT_UNKNOWN);
             return ToolResult.indeterminate(call.id(), call.name(),
                     "Tool execution was interrupted; the outcome may be unknown and the call was not replayed");
         } catch (Exception e) {
             log.warn("runId={} stepId={} tool={} failureCategory={} exceptionType={}",
-                    runId, stepId, call.name(), FailureCategory.TOOL_EXECUTION, e.getClass().getSimpleName());
+                    runId, stepId, registeredToolName, FailureCategory.TOOL_EXECUTION, e.getClass().getSimpleName());
             return ToolResult.failure(call.id(), call.name(), "Tool execution failed",
                     FailureCategory.TOOL_EXECUTION);
         }
