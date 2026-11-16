@@ -40,6 +40,7 @@ public final class AgentEvaluationRunner {
     private final CollaborationConfig collaborationDefaults;
     private final ObjectMapper mapper;
     private final AgentTelemetry telemetry;
+    private final EvaluationEvaluatorRegistry evaluators = EvaluationEvaluatorRegistry.defaults();
 
     public AgentEvaluationRunner(ModelClient model, ToolRegistry tools, ToolExecutor toolExecutor,
                                 WorkerRegistry workers, RunStore store, RuntimeConfig runtimeDefaults,
@@ -58,10 +59,16 @@ public final class AgentEvaluationRunner {
 
     public AgentEvaluationResult run(AgentEvaluationDataset dataset, String modelName,
                                      AgentEvaluationConfig config) {
+        return run(dataset, modelName, config, EvaluationProgressListener.NOOP);
+    }
+
+    public AgentEvaluationResult run(AgentEvaluationDataset dataset, String modelName,
+                                     AgentEvaluationConfig config, EvaluationProgressListener progress) {
         if (dataset == null || modelName == null || modelName.isBlank() || config == null) {
             throw new IllegalArgumentException("Evaluation dataset, model, and limits are required");
         }
         if (!config.enabled()) throw new IllegalStateException("Live model evaluation is disabled");
+        progress = progress == null ? EvaluationProgressListener.NOOP : progress;
         Instant startedAt = Instant.now();
         Instant deadline = startedAt.plus(config.totalTimeout());
         List<AgentEvaluationCaseResult> results = new ArrayList<>();
@@ -78,31 +85,33 @@ public final class AgentEvaluationRunner {
         for (int i = 0; i < dataset.scenarios().size(); i++) {
             AgentEvaluationScenario scenario = dataset.scenarios().get(i);
             if (i >= config.maxCases()) {
-                results.add(notRun(scenario, "NOT_RUN_CASE_LIMIT"));
+                var skipped = notRun(scenario, "NOT_RUN_CASE_LIMIT", config.maxModelCalls(), config.maxToolCalls());
+                results.add(skipped); progress.caseCompleted(scenario, skipped);
                 continue;
             }
             int remainingModels = config.maxModelCalls() - usedModels;
             int remainingTools = config.maxToolCalls() - usedTools;
             Duration remainingTime = Duration.between(Instant.now(), deadline);
             if (remainingModels < 1) {
-                results.add(notRun(scenario, "NOT_RUN_MODEL_BUDGET"));
+                var skipped = notRun(scenario, "NOT_RUN_MODEL_BUDGET", config.maxModelCalls(), config.maxToolCalls());
+                results.add(skipped); progress.caseCompleted(scenario, skipped);
                 continue;
             }
             if (remainingTime.isNegative() || remainingTime.isZero()) {
-                results.add(notRun(scenario, "NOT_RUN_TIME_BUDGET"));
+                var skipped = notRun(scenario, "NOT_RUN_TIME_BUDGET", config.maxModelCalls(), config.maxToolCalls());
+                results.add(skipped); progress.caseCompleted(scenario, skipped);
                 continue;
             }
 
             Duration caseTimeout = minimum(remainingTime, runtimeDefaults.taskTimeout());
             RunRecord run;
+            progress.caseStarted(scenario);
             try {
                 run = execute(scenario, remainingModels, remainingTools, caseTimeout);
             } catch (RuntimeException failure) {
-                results.add(notRun(scenario, "INFRASTRUCTURE_ERROR"));
-                for (int remaining = i + 1; remaining < dataset.scenarios().size(); remaining++) {
-                    results.add(notRun(dataset.scenarios().get(remaining), "NOT_RUN_AFTER_ERROR"));
-                }
-                break;
+                var failed = notRun(scenario, "INFRASTRUCTURE_ERROR", config.maxModelCalls(), config.maxToolCalls());
+                results.add(failed); progress.caseCompleted(scenario, failed);
+                continue;
             }
 
             usedModels += run.modelCalls();
@@ -135,14 +144,19 @@ public final class AgentEvaluationRunner {
                 allUsageKnown = false;
                 costKnown = false;
             }
-            boolean passedCase = completedSuccessfully && toolsMatch && planMatches
-                    && !Boolean.FALSE.equals(answerAssertionsMatched);
-            if (passedCase) passed++;
-            results.add(new AgentEvaluationCaseResult(scenario.id(), run.runId(), run.status().name(),
+            var caseResult = new AgentEvaluationCaseResult(scenario.id(), run.runId(), run.status().name(),
                     run.failureCategory(), completedSuccessfully, scenario.expectedTools(), actualTools, toolsMatch,
                     planRoute, planMatches, plannedTaskCount, plannedWorkers, plannedTasks, run.modelCalls(), run.toolCalls(),
                     run.tokenUsageKnown(), promptTokens, completionTokens, caseCost,
-                    run.totalDurationMillis(), run.finalAnswer(), answerAssertionsMatched, null));
+                    run.totalDurationMillis(), run.finalAnswer(), answerAssertionsMatched, null);
+            List<EvaluationScore> scores = evaluators.evaluate(scenario, caseResult,
+                    config.maxModelCalls(), config.maxToolCalls());
+            caseResult = caseResult.withScores(scores);
+            progress.caseCompleted(scenario, caseResult);
+            boolean passedCase = scores.stream().allMatch(score -> score.outcome() == EvaluationOutcome.PASS
+                    || score.outcome() == EvaluationOutcome.NOT_APPLICABLE);
+            if (passedCase) passed++;
+            results.add(caseResult);
         }
 
         Instant completedAt = Instant.now();
@@ -190,7 +204,8 @@ public final class AgentEvaluationRunner {
             Path report = reportDirectory.resolve("report.json");
             byte[] content = mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(new EvaluationReportFile(
                     datasetVersion, modelName, startedAt, completedAt, completed, passed, modelCalls, toolCalls,
-                    usageKnown, promptTokens, completionTokens, estimatedCost, results));
+                    usageKnown, promptTokens, completionTokens, estimatedCost,
+                    results.stream().map(EvaluationCaseReport::from).toList()));
             Files.createFile(report, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
             Files.write(report, content);
             return report;
@@ -233,14 +248,36 @@ public final class AgentEvaluationRunner {
 
     private static Duration minimum(Duration left, Duration right) { return left.compareTo(right) <= 0 ? left : right; }
 
-    private static AgentEvaluationCaseResult notRun(AgentEvaluationScenario scenario, String status) {
-        return new AgentEvaluationCaseResult(scenario.id(), null, status, null, false,
+    private AgentEvaluationCaseResult notRun(AgentEvaluationScenario scenario, String status,
+                                             int modelCallLimit, int toolCallLimit) {
+        var result = new AgentEvaluationCaseResult(scenario.id(), null, status, null, false,
                 scenario.expectedTools(), List.of(), false, null, false, 0, List.of(), List.of(), 0, 0,
                 false, null, null, null, 0, null, null, null);
+        return result.withScores(evaluators.evaluate(scenario, result, modelCallLimit, toolCallLimit));
+    }
+
+    private record EvaluationCaseReport(String scenarioId, String runId, String status, String failureCategory,
+                                        boolean completed, List<String> expectedTools, List<String> actualTools,
+                                        boolean toolSelectionMatched, String planRoute, boolean planMatched,
+                                        int plannedTaskCount, List<String> plannedWorkers,
+                                        List<AgentEvaluationPlanTask> plannedTasks, int modelCalls, int toolCalls,
+                                        boolean tokenUsageKnown, Long promptTokens, Long completionTokens,
+                                        BigDecimal estimatedCostUsd, long durationMillis,
+                                        Boolean answerAssertionsMatched, Integer manualRating,
+                                        List<EvaluationScore> scores) {
+        private static EvaluationCaseReport from(AgentEvaluationCaseResult result) {
+            return new EvaluationCaseReport(result.scenarioId(), result.runId(), result.status(),
+                    result.failureCategory() == null ? null : result.failureCategory().name(), result.completed(),
+                    result.expectedTools(), result.actualTools(), result.toolSelectionMatched(), result.planRoute(),
+                    result.planMatched(), result.plannedTaskCount(), result.plannedWorkers(), result.plannedTasks(),
+                    result.modelCalls(), result.toolCalls(), result.tokenUsageKnown(), result.promptTokens(),
+                    result.completionTokens(), result.estimatedCostUsd(), result.durationMillis(),
+                    result.answerAssertionsMatched(), result.manualRating(), result.scores());
+        }
     }
 
     private record EvaluationReportFile(String datasetVersion, String model, Instant startedAt, Instant completedAt,
                                         int completedCases, int passedCases, int modelCalls, int toolCalls,
                                         boolean tokenUsageKnown, Long promptTokens, Long completionTokens,
-                                        BigDecimal estimatedCostUsd, List<AgentEvaluationCaseResult> cases) { }
+                                        BigDecimal estimatedCostUsd, List<EvaluationCaseReport> cases) { }
 }

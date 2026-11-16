@@ -8,6 +8,9 @@ import com.example.agent.workflow.RunStatus;
 import com.example.agent.app.RunSubmissionService;
 import com.example.agent.evaluation.AgentEvaluationConfig;
 import com.example.agent.evaluation.AgentEvaluationRunner;
+import com.example.agent.evaluation.EvaluationService;
+import com.example.agent.evaluation.EvaluationRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
 
@@ -38,7 +41,8 @@ class MainTest {
 
         new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), properties,
                 mock(RunSubmissionService.class), runId -> java.util.List.of(),
-                mock(AgentEvaluationRunner.class), evaluationConfig())
+                mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                mock(EvaluationRepository.class), new ObjectMapper())
                 .run(new DefaultApplicationArguments(new String[0]));
 
         verify(runtime).runTracked("calculate 2 + 2");
@@ -52,7 +56,8 @@ class MainTest {
         assertThrows(IllegalArgumentException.class, () -> new Main(mock(AgentRuntime.class),
                         mock(CollaborativeWorkflow.class), new InMemoryRunStore(), properties,
                         mock(RunSubmissionService.class), runId -> java.util.List.of(),
-                        mock(AgentEvaluationRunner.class), evaluationConfig())
+                        mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                        mock(EvaluationRepository.class), new ObjectMapper())
                 .run(new DefaultApplicationArguments(new String[0])));
     }
 
@@ -64,7 +69,8 @@ class MainTest {
 
         assertThrows(IllegalStateException.class, () -> new Main(mock(AgentRuntime.class),
                         mock(CollaborativeWorkflow.class), new InMemoryRunStore(), properties,
-                        mock(RunSubmissionService.class), runId -> java.util.List.of(), runner, evaluationConfig())
+                        mock(RunSubmissionService.class), runId -> java.util.List.of(), runner, evaluationConfig(),
+                        mock(EvaluationService.class), mock(EvaluationRepository.class), new ObjectMapper())
                 .run(new DefaultApplicationArguments(new String[0])));
         org.mockito.Mockito.verifyNoInteractions(runner);
     }
@@ -81,7 +87,8 @@ class MainTest {
 
             new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
                     mock(RunSubmissionService.class), runId -> java.util.List.of(),
-                    mock(AgentEvaluationRunner.class), evaluationConfig())
+                    mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                    mock(EvaluationRepository.class), new ObjectMapper())
                     .run(new DefaultApplicationArguments(new String[0]));
         } finally {
             System.setIn(originalIn);
@@ -104,7 +111,8 @@ class MainTest {
 
             new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
                     mock(RunSubmissionService.class), runId -> java.util.List.of(),
-                    mock(AgentEvaluationRunner.class), evaluationConfig())
+                    mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                    mock(EvaluationRepository.class), new ObjectMapper())
                     .run(new DefaultApplicationArguments(new String[0]));
         } finally {
             System.setIn(originalIn);

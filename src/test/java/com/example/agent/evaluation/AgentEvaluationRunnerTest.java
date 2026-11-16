@@ -25,6 +25,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AgentEvaluationRunnerTest {
     @Test
+    void reportDoesNotDuplicatePromptOrAnswerContent(@TempDir Path output) throws Exception {
+        var tools = new ToolRegistry();
+        var dataset = new AgentEvaluationDataset("report-v1", List.of(new AgentEvaluationScenario(
+                "report-case", EvaluationWorkflow.SINGLE_AGENT, "synthetic prompt private-971", List.of())));
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse(
+                    "synthetic answer private-284", List.of(), 2L, 1L), tools, executor,
+                    new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(2),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+
+            var result = runner.run(dataset, "test-model", new AgentEvaluationConfig(true, 1, 2, 0,
+                    Duration.ofMinutes(1), output, null, null));
+            String report = Files.readString(result.reportPath());
+
+            assertFalse(report.contains("synthetic prompt private-971"));
+            assertFalse(report.contains("synthetic answer private-284"));
+            assertEquals("synthetic answer private-284", result.cases().getFirst().answer());
+        }
+    }
+
+    @Test
     void answerPhraseAssertionsFailACompletedCaseWithIncorrectProvenance(@TempDir Path output) throws Exception {
         var dataset = AgentEvaluationDatasetLoader.load(
                 Path.of("src/test/resources/eval/scenario-answer-assertions.json"),
@@ -192,6 +213,27 @@ class AgentEvaluationRunnerTest {
         assertEquals("2026-11-v1", dataset.version());
         assertEquals(5, dataset.scenarios().size());
         assertTrue(dataset.scenarios().stream().anyMatch(scenario -> scenario.expectedTools().contains("weather")));
+    }
+
+    @Test
+    void reportsDurableCaseBoundariesForEvaluationService(@TempDir Path output) {
+        var tools = new ToolRegistry();
+        var dataset = new AgentEvaluationDataset("progress-v1", List.of(new AgentEvaluationScenario(
+                "progress-case", EvaluationWorkflow.SINGLE_AGENT, "synthetic prompt", List.of())));
+        var events = new java.util.ArrayList<String>();
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse("done", List.of(), 1L, 1L),
+                    tools, executor, new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(2),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            runner.run(dataset, "test-model", new AgentEvaluationConfig(true, 1, 2, 0,
+                    Duration.ofMinutes(1), output, null, null), new EvaluationProgressListener() {
+                @Override public void caseStarted(AgentEvaluationScenario scenario) { events.add("START:" + scenario.id()); }
+                @Override public void caseCompleted(AgentEvaluationScenario scenario, AgentEvaluationCaseResult result) {
+                    events.add("DONE:" + scenario.id() + ":" + result.status());
+                }
+            });
+        }
+        assertEquals(List.of("START:progress-case", "DONE:progress-case:SUCCEEDED"), events);
     }
 
     @Test

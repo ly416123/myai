@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阶段四总结：可比较、可恢复的 Agent 评测</title>
+  <style>
+    :root { color-scheme: light; --ink:#182230; --muted:#475467; --line:#d0d5dd; --panel:#f8fafc; --blue:#eaf2ff; --green:#ecfdf3; --amber:#fffaeb; }
+    body { max-width:1120px; margin:2rem auto; padding:0 1.25rem 4rem; color:var(--ink); font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    h1,h2,h3 { line-height:1.25; } h1 { margin-bottom:.25rem; } h2 { margin-top:2.4rem; padding-bottom:.4rem; border-bottom:1px solid var(--line); }
+    .meta,.note { color:var(--muted); } .callout { padding:1rem 1.2rem; border:1px solid var(--line); border-radius:.65rem; background:var(--panel); }
+    .pass { background:var(--green); border-color:#abefc6; } .limited { background:var(--amber); border-color:#fedf89; }
+    figure { margin:1rem 0 1.6rem; padding:1rem; border:1px solid var(--line); border-radius:.75rem; background:#fff; overflow-x:auto; }
+    figcaption { color:var(--muted); margin-top:.6rem; font-size:.94rem; }
+    svg { display:block; width:100%; min-width:760px; height:auto; }
+    .layer { fill:#f8fafc; stroke:#98a2b3; stroke-width:1.5; rx:12; }
+    .node { fill:#fff; stroke:#667085; stroke-width:1.5; rx:9; }
+    .node-blue { fill:var(--blue); stroke:#528bff; } .node-green { fill:var(--green); stroke:#32a36a; }
+    .node-amber { fill:var(--amber); stroke:#d99a17; }
+    .title { font-size:17px; font-weight:700; fill:#101828; } .label { font-size:14px; fill:#344054; }
+    .small { font-size:12px; fill:#475467; } .arrow { stroke:#475467; stroke-width:2; fill:none; marker-end:url(#arrow); }
+    table { width:100%; border-collapse:collapse; margin:1rem 0; } th,td { text-align:left; vertical-align:top; border:1px solid var(--line); padding:.65rem .75rem; }
+    th { background:#f2f4f7; } code { overflow-wrap:anywhere; }
+    @media print { body { margin:0; max-width:none; } figure { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="meta">MyAi · 阶段四 · 验收时点：2026-11-16（本地工作区）</p>
+    <h1>可比较、可恢复的 Agent 评测</h1>
+    <p class="meta">本页描述阶段四完成时的实现快照，不等同于整体企业架构生产就绪声明。</p>
+  </header>
+
+  <section class="callout pass" aria-labelledby="verdict">
+    <h2 id="verdict">验收结论</h2>
+    <p><strong>阶段四功能范围验收通过。</strong>版本化数据集校验、确定性 Evaluator、PostgreSQL 实验记录、逐用例写入、执行租约与 fencing 恢复、兼容比较、脱敏导出、CLI 和 Fake 回归均已实现并由测试覆盖。最终 Maven 构建 204 项测试通过，0 失败、0 错误、0 跳过。真实模型调用、真实密钥和 L5 部署均未参与本次验收。</p>
+    <p><strong>验收后的补充复验（2026-11-16）：</strong>原先 Docker 测试路径卡在 Colima 镜像层下载。检查发现 Colima 配有三个 Docker Hub mirror，daemon 对其发出 host mismatch 警告；直连 Docker Hub 的 registry/auth 可达，但镜像 layer/CDN 传输仍无进度，containerd 报 layer writer 锁定。随后从 Prometheus v3.16.0 官方 GitHub Release 获取 macOS ARM64 归档，并与官方 sha256sums.txt 中的 SHA-256（<code>f7c71b553316f822bdd860a3ea527ebefb2f8e944e5b7dfd419ae2653cf3ba01</code>）核对一致；同版本原生 <code>promtool</code> 的 10 条规则测试全部成功。测试脚本已增加 macOS ARM64/AMD64 的官方校验归档路径，并保留其他平台的固定容器路径。脚本使用默认项目缓存连续运行两次均通过：首次下载/校验并缓存，第二次命中缓存；未创建容器、未改动 Prometheus 规则或 L5。原始卡点已通过更换校验工具分发路径解决，Docker Hub layer/CDN 传输原因仍属外部网络路径问题。</p>
+  </section>
+
+  <section>
+    <h2>1. 阶段目标与上一阶段遗留问题</h2>
+    <p>阶段四把阶段二、三已有的 Fake 回归集和真实 Provider Runner 从“单次运行后生成本地报告”扩展为可持久化和可对比的评测实验。保持 Agent 控制循环与工具协议不变，不引入 Langfuse、评测平台或新的常驻服务。</p>
+    <ul>
+      <li>阶段三已有固定 Fake 样例、版本化数据集和人工/短语断言，但没有稳定的 Evaluation ID、统一 Evaluator 版本清单或 PostgreSQL 跨次结果查询。</li>
+      <li>真实评测主要依靠本地 JSON 文件和每个 Agent Run 的持久化；报告不能通过统一的 dataset hash、Evaluator manifest 和执行模式判断是否可比较。</li>
+      <li>用例执行中断后没有独立的实验/用例状态、并发 claim 或明确的不重放边界。</li>
+    </ul>
+    <p>这些缺口使历史结果难以复现与关联，也让进程中断时无法区分已完成、未开始和模型结果未知的用例；阶段四围绕这些问题新增实验生命周期，而没有重写 Runner 或 Workflow。</p>
+  </section>
+
+  <section id="architecture">
+    <h2>2. 阶段四整体分层架构</h2>
+    <p>下图对应 <strong>2026-11-16 本地阶段四验收时点</strong>。绿色框是本阶段新增或扩展的评测能力；已有 Runtime/Workflow、Provider、工具和观测组件保留既有职责。图中 PostgreSQL V7 仅在本地 Testcontainers 迁移验证，本次未部署到 L5。</p>
+    <figure>
+      <svg viewBox="0 0 1100 790" role="img" aria-labelledby="arch-title arch-desc">
+        <title id="arch-title">阶段四评测架构分层图</title>
+        <desc id="arch-desc">从命令行进入应用服务和评测领域层，复用 Agent Runtime，数据由 PostgreSQL/Flyway 持久化并与 OpenTelemetry Trace 关联。</desc>
+        <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475467"/></marker></defs>
+        <rect class="layer" x="20" y="20" width="1060" height="105"/><text class="title" x="42" y="50">交互与适配层</text>
+        <rect class="node node-blue" x="250" y="38" width="300" height="65"/><text class="title" x="275" y="66">Main CLI</text><text class="small" x="275" y="88">/eval run · list · show · compare · export · recover</text>
+        <rect class="node" x="650" y="38" width="320" height="65"/><text class="label" x="675" y="66">真实 Provider 显式开关</text><text class="small" x="675" y="88">AGENT_EVAL_ENABLED=true；Fake 仅用于测试/CI</text>
+
+        <rect class="layer" x="20" y="145" width="1060" height="115"/><text class="title" x="42" y="176">应用编排层</text>
+        <rect class="node node-green" x="250" y="162" width="720" height="78"/><text class="title" x="275" y="190">EvaluationService</text><text class="small" x="275" y="214">创建实验、校验 Evaluator、获取执行租约、共享预算、逐 case 检查点、结束/恢复</text>
+        <path class="arrow" d="M400 103 L400 160"/>
+
+        <rect class="layer" x="20" y="280" width="1060" height="145"/><text class="title" x="42" y="311">评测领域与策略层</text>
+        <rect class="node node-green" x="70" y="328" width="260" height="73"/><text class="label" x="92" y="356">DatasetLoader / Snapshot</text><text class="small" x="92" y="379">格式与 Schema 校验、规范化 SHA-256</text>
+        <rect class="node node-green" x="420" y="328" width="285" height="73"/><text class="label" x="442" y="356">EvaluatorRegistry</text><text class="small" x="442" y="379">运行、工具、计划、回答、预算、JSON、失败类别</text>
+        <rect class="node node-green" x="795" y="328" width="235" height="73"/><text class="label" x="817" y="356">Comparator / Exporter</text><text class="small" x="817" y="379">拒绝不兼容实验；JSON 最小字段</text>
+        <path class="arrow" d="M400 240 L400 277"/><path class="arrow" d="M550 260 L550 326"/>
+
+        <rect class="layer" x="20" y="445" width="1060" height="145"/><text class="title" x="42" y="476">Agent 执行层（复用阶段二/三）</text>
+        <rect class="node" x="110" y="493" width="290" height="72"/><text class="label" x="132" y="522">AgentEvaluationRunner</text><text class="small" x="132" y="546">Runner listener 报告 case 开始/结束</text>
+        <rect class="node" x="470" y="493" width="250" height="72"/><text class="label" x="492" y="522">单 Agent Runtime / Collaborative Workflow</text><text class="small" x="492" y="546">原有调用预算、Deadline、RunStore</text>
+        <rect class="node" x="790" y="493" width="230" height="72"/><text class="label" x="812" y="522">ModelClient + Tools</text><text class="small" x="812" y="546">CI Fake / 手动真实 Provider</text>
+        <path class="arrow" d="M550 401 L550 491"/><path class="arrow" d="M400 529 L468 529"/><path class="arrow" d="M720 529 L788 529"/>
+
+        <rect class="layer" x="20" y="610" width="1060" height="155"/><text class="title" x="42" y="641">基础设施与持久化层</text>
+        <rect class="node node-green" x="90" y="660" width="465" height="78"/><text class="label" x="112" y="689">PostgreSQL / Flyway V7 · EvaluationRepository</text><text class="small" x="112" y="713">evaluation_run · evaluation_case · status events · owner/fence/lease</text>
+        <rect class="node" x="620" y="660" width="390" height="78"/><text class="label" x="642" y="689">OpenTelemetry / AgentTelemetry</text><text class="small" x="642" y="713">evaluationId/caseId 高基数 Trace 属性；不加入 Prometheus 标签</text>
+        <path class="arrow" d="M300 565 L300 658"/><path class="arrow" d="M870 565 L870 658"/>
+      </svg>
+      <figcaption>逻辑层图，不表示本地应用与 L5 的部署拓扑。阶段四使用已有 PostgreSQL/OTel 组件，没有新增服务。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>3. 实验执行与安全恢复流程</h2>
+    <figure>
+      <svg viewBox="0 0 1100 500" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">评测实验执行和中断恢复流程</title>
+        <desc id="flow-desc">先校验数据集，再创建实验和租约；每个 case 开始前落 RUNNING，执行后写分数。若进程中断，等待 Deadline 和租约过期后标记 unknown 与 skipped 并结束 PARTIAL，不重放模型调用。</desc>
+        <defs><marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#475467"/></marker></defs>
+        <rect class="node node-blue" x="30" y="55" width="190" height="72"/><text class="label" x="52" y="84">读取 Dataset</text><text class="small" x="52" y="107">schema / ID / hash</text>
+        <rect class="node node-green" x="280" y="55" width="220" height="72"/><text class="label" x="302" y="84">创建 Evaluation</text><text class="small" x="302" y="107">CREATED → RUNNING + lease</text>
+        <rect class="node node-green" x="560" y="55" width="220" height="72"/><text class="label" x="582" y="84">启动 Case</text><text class="small" x="582" y="107">PENDING → RUNNING</text>
+        <rect class="node" x="840" y="55" width="220" height="72"/><text class="label" x="862" y="84">执行 Run/Workflow</text><text class="small" x="862" y="107">共享模型/工具/Deadline 预算</text>
+        <path class="arrow" marker-end="url(#arrow2)" d="M220 91 L278 91"/><path class="arrow" marker-end="url(#arrow2)" d="M500 91 L558 91"/><path class="arrow" marker-end="url(#arrow2)" d="M780 91 L838 91"/>
+        <rect class="node node-green" x="560" y="185" width="220" height="72"/><text class="label" x="582" y="214">Evaluator 评分</text><text class="small" x="582" y="237">PASS / FAIL / UNKNOWN / N/A</text>
+        <rect class="node node-green" x="280" y="185" width="220" height="72"/><text class="label" x="302" y="214">逐 Case 落库</text><text class="small" x="302" y="237">scores / usage / runId / duration</text>
+        <rect class="node node-green" x="30" y="185" width="190" height="72"/><text class="label" x="52" y="214">最终状态</text><text class="small" x="52" y="237">SUCCEEDED / PARTIAL / FAILED</text>
+        <path class="arrow" marker-end="url(#arrow2)" d="M950 127 C950 164 780 154 780 184"/><path class="arrow" marker-end="url(#arrow2)" d="M560 221 L502 221"/><path class="arrow" marker-end="url(#arrow2)" d="M280 221 L222 221"/>
+        <path class="arrow" marker-end="url(#arrow2)" d="M670 185 C670 150 670 150 670 130"/>
+        <rect class="node node-amber" x="300" y="330" width="285" height="92"/><text class="label" x="322" y="359">进程消失 / 结果未知</text><text class="small" x="322" y="383">Lease 心跳停止；等待 Deadline 与 lease 均过期</text><text class="small" x="322" y="403">活动心跳仍在时拒绝恢复</text>
+        <rect class="node node-amber" x="700" y="330" width="330" height="92"/><text class="label" x="722" y="359">事务性恢复 + fence 提升</text><text class="small" x="722" y="383">RUNNING → INDETERMINATE；PENDING → SKIPPED</text><text class="small" x="722" y="403">Evaluation → PARTIAL；旧 owner 后续写入被拒绝</text>
+        <path class="arrow" marker-end="url(#arrow2)" d="M585 376 L698 376"/>
+        <text class="small" x="300" y="466">不自动重放未知模型请求。数据库 fencing 阻止旧执行者继续推进记录，但不能撤销供应商已受理请求或外部工具副作用。</text>
+      </svg>
+      <figcaption>恢复只收敛到安全检查点；用户需新建实验明确重跑未知用例。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>4. 实现与设计决策</h2>
+    <table>
+      <thead><tr><th>决策</th><th>实现与原因</th><th>主要替代方案</th></tr></thead>
+      <tbody>
+        <tr><td>复用 PostgreSQL + Flyway</td><td>V7 增加 evaluation_run、evaluation_case、状态事件和执行租约，减少新平台/服务；评分通过 Run 外键关联，删除 Run 时只清空链接并保留评测分数。</td><td>本地 JSON 文件无法可靠多进程 claim；新增评测平台增加部署与数据流范围，阶段四不采用 Langfuse。</td></tr>
+        <tr><td>单执行者 lease + fencing</td><td>状态条件更新选出唯一 owner，后台心跳续租；恢复要求 Deadline 和 lease 都已过期，事务终结当前实验并提升 fence，旧 owner 无法写入。</td><td>只看 Deadline 无法识别活跃执行者；自动重放会重复费用或外部副作用。</td></tr>
+        <tr><td>确定性 Evaluator</td><td>Evaluator 有稳定 ID/version；支持 Run 结果、工具选择、协作计划、短语断言、预算、结构化 JSON Schema 和预期失败类别。Schema 在 DatasetLoader 阶段编译，只允许文档内引用。</td><td>LLM-as-a-Judge 波动且另有费用，不能作为本阶段确定性门禁。</td></tr>
+        <tr><td>最小持久化与脱敏导出</td><td>数据库只保存数据集身份、模型元信息、状态、评分、调用/Token/耗时和 Run ID，不复制 prompt、answer、工具参数；JSON 导出为 DTO 序列化且字段/map 顺序稳定。</td><td>复制完整对话便于 UI 浏览，但扩大敏感正文复制面，本阶段不做。</td></tr>
+        <tr><td>先真实 Provider CLI，CI 只 Fake</td><td>保留 `AGENT_EVAL_ENABLED=true` 显式开关；真实运行有案例/模型/工具/Deadline 预算。JUnit 和 CI 使用 Fake 模型与确定性数据。</td><td>普通 CI 真实模型调用会产生费用、暴露数据并引入非确定性。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>5. 效果与实测</h2>
+    <ul>
+      <li>DatasetLoader 生成稳定 `datasetId/version/formatVersion/contentSha256`；空白和 JSON Schema object 属性顺序不改变规范化哈希。未知 Evaluator、无效/远程 Schema 引用在模型调用前拒绝。</li>
+      <li>PostgreSQL 对同一 evaluation 做原子 claim；case 终态写入只成功一次。删除被关联 Run 后评分仍在。状态时间写入 `evaluation_status_event`。</li>
+      <li>比较器拒绝数据集哈希、Evaluator manifest、Workflow 模式、case/score 集合不一致以及 `CREATED/RUNNING` 实验；报告逐 Evaluator 的 pass/fail/unknown 变化、工具选择观察、Token 覆盖、调用数、费用估值以及 duration 样本均值/中位数/p95/min/max。</li>
+      <li>评测 spans 关联 `evaluationId/caseId/runId` 为高基数 Trace 属性，不增加 Prometheus 标签。未知 Token、费用或耗时保持未知。</li>
+      <li>本地阶段总结没有收集真实模型质量新数据；小型 Fake 结果只能证明已实现分支的行为，不代表生产质量或统计显著性。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>6. 验收命令与结果</h2>
+    <table>
+      <thead><tr><th>命令/检查</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td><code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code></td><td>BUILD SUCCESS；204 tests，0 failures、0 errors、0 skipped。PostgreSQL 16 Testcontainers/Flyway V1–V7 和 OTel Collector Testcontainers 实际执行。Fake ModelClient；未读取真实 key、未访问模型 Provider。</td></tr>
+        <tr><td><code>bash ops/tests/image-digests-test.sh</code></td><td>通过：PostgreSQL、OTel Collector、Prometheus v3.16.0、Tempo、Grafana 固定的 linux/amd64 manifest digest 均与仓库声明一致。</td></tr>
+        <tr><td><code>kubectl kustomize deploy/overlays/l5</code></td><td>退出码 0，清单成功渲染；未应用到集群。</td></tr>
+        <tr><td><code>git diff --check</code></td><td>退出码 0。</td></tr>
+        <tr><td><code>bash ops/tests/prometheus-alerts-test.sh</code></td><td>阶段验收时 Docker 路径曾因镜像层下载无进展而中止。2026-11-16 补充修复后，在 macOS ARM64 使用 SHA-256 固定的官方 v3.16.0 <code>promtool</code>，默认缓存首次运行与缓存命中第二次运行均输出 <code>SUCCESS</code>；规则测试全部通过。容器路径仍用于 CI/其他平台，仍固定 v3.16.0。L5 当时 API 不可达，因此未部署。</td></tr>
+      </tbody>
+    </table>
+    <p>最后一次完整构建于 2026-11-16 16:14（Asia/Shanghai）运行。构建曾因新增 duration quantile 辅助方法缺少 `List` import 首次编译失败，补充 import 后全量重跑通过；失败运行不计入最终通过结果。</p>
+  </section>
+
+  <section>
+    <h2>7. 限制、风险与下一步</h2>
+    <ul>
+      <li>Lease fencing 可阻止已失租的 owner 继续写评测记录或推进下一 case，但不能撤销供应商已接受的模型请求、取消外部工具副作用或避免网络分区期间已发出的费用。没有工具幂等键/事务协议时不保证 exactly-once。</li>
+      <li>状态 lease 续租依赖本进程调度线程和数据库可用性；数据库连接中断会让当前执行失去写权限。需要等待 deadline 与 lease 都过期后再恢复。测试覆盖 lease 过期和 stale owner 拒写，但没有压力测试长时间数据库中断/调度停顿。</li>
+      <li>时延摘要只描述每次实验有限样本的均值、分位数和样本数，不做显著性检验，不设伪造性能阈值。固定数据集也不能代表真实用户分布。</li>
+      <li>评测历史没有自动清理策略，按项目决定持续保留；Run 正文仍受现有 RunStore 保留配置影响。L5 当前代码未部署，数据库 schema 的现场版本仍需下次连通后确认；历史可确认版本为 v6。</li>
+      <li>本阶段没有 HTTP API、生产认证授权、Web UI、Langfuse、外部通知或新评测平台；这与“评测引擎 + PostgreSQL 持久化 + CLI”的范围一致。</li>
+      <li>下一步建议：L5 恢复可达后先只读确认 schema 和资源，再决定是否发布含 V7 的应用；后续再结合已批准数据分类和保留策略评估真实模型集、成本门槛和多次运行统计方法。</li>
+    </ul>
+  </section>
+
+  <footer class="note">
+    <p>关联文档：<a href="../plans/phase-04-requirements.md">阶段四需求基线</a> · <a href="../plans/phase-04-implementation-plan.md">阶段四实现计划</a> · <a href="../architecture/enterprise-migration-roadmap.md">企业升级路线图</a> · <a href="../../README.md">README</a></p>
+  </footer>
+</body>
+</html>

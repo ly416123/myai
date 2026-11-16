@@ -20,6 +20,10 @@ import com.example.agent.app.RunSubmissionPolicy;
 import com.example.agent.app.RunSubmissionService;
 import com.example.agent.evaluation.AgentEvaluationConfig;
 import com.example.agent.evaluation.AgentEvaluationRunner;
+import com.example.agent.evaluation.EvaluationRepository;
+import com.example.agent.evaluation.PostgresEvaluationRepository;
+import com.example.agent.evaluation.EvaluationService;
+import com.example.agent.evaluation.EvaluationEvaluatorRegistry;
 import com.example.agent.workflow.RuntimeConfig;
 import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.RunRetentionService;
@@ -112,6 +116,23 @@ public class AgentConfiguration {
                                                 AgentTelemetry telemetry) {
         return new AgentEvaluationRunner(model, tools, executor, workers, store, runtimeConfig,
                 collaborationConfig, mapper, telemetry);
+    }
+
+    @Bean
+    EvaluationRepository evaluationRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
+        return new PostgresEvaluationRepository(jdbc, mapper);
+    }
+
+    @Bean
+    EvaluationEvaluatorRegistry evaluationEvaluatorRegistry() {
+        return EvaluationEvaluatorRegistry.defaults();
+    }
+
+    @Bean
+    EvaluationService evaluationService(EvaluationRepository repository, AgentEvaluationRunner runner,
+                                        EvaluationEvaluatorRegistry evaluators, Environment environment,
+                                        AgentTelemetry telemetry) {
+        return new EvaluationService(repository, runner, evaluators, environment.getProperty("GIT_COMMIT"), telemetry);
     }
 
     @Bean

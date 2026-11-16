@@ -61,6 +61,22 @@ public final class AgentTelemetry {
                 .start();
     }
 
+    /** Case identifiers are trace attributes only; they are deliberately never copied to metric tags. */
+    public Observation startEvaluationCase(String evaluationId, String caseId) {
+        return Observation.createNotStarted("agent.evaluation.case", observations)
+                .highCardinalityKeyValue("evaluation.id", evaluationId)
+                .highCardinalityKeyValue("evaluation.case.id", caseId)
+                .start();
+    }
+
+    public void finishEvaluationCase(Observation observation, Observation.Scope scope, String status, String runId) {
+        if (observation == null) return;
+        if (runId != null) observation.highCardinalityKeyValue("run.id", runId);
+        observation.lowCardinalityKeyValue("case.status", safeTag(status));
+        if (scope != null) scope.close();
+        observation.stop();
+    }
+
     /** Captures only W3C trace identity fields for durable child-task propagation; baggage is intentionally excluded. */
     public Map<String, String> captureCurrentTraceContext() {
         Map<String, String> carrier = new LinkedHashMap<>();

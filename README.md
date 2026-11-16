@@ -11,6 +11,10 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段二：有状态 Workflow、检查点恢复、基础可观测与回归评测](docs/stages/phase-02-summary.html)
 - [阶段三迭代提示词：Supervisor–Worker 多 Agent 协作](docs/plans/phase-03-iteration-prompt.md)
 - [阶段三：Supervisor–Worker 协作（复验通过）](docs/stages/phase-03-summary.html)
+- [阶段四需求设计：可比较、可复现的 Agent 评测（已确认）](docs/plans/phase-04-requirements.md)
+- [阶段四实现计划](docs/plans/phase-04-implementation-plan.md)
+- [阶段四：评测生命周期与可比较结果（功能验收通过；Prometheus 告警规则复验通过）](docs/stages/phase-04-summary.html)
+- [阶段五需求草案：Worker 能力注册与子任务数据契约](docs/plans/phase-05-requirements.md)
 
 每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。阶段总结中的架构图是各阶段验收时点的历史快照，不代表当前企业架构的完整形态，可分别查看：[阶段一历史快照](docs/stages/phase-01-summary.html#architecture)、[阶段二历史快照](docs/stages/phase-02-summary.html#architecture)、[阶段三历史快照](docs/stages/phase-03-summary.html#architecture)。当前企业化架构与交付状态以[升级路线图](docs/architecture/enterprise-migration-roadmap.md)为准。详见项目根目录的 `AGENTS.md`。
 
@@ -154,7 +158,7 @@ Run 执行期间会保持 `agent.run` Observation scope；模型调用在线程�
 
 Worker 每次开始轮询时会原子更新 `/tmp/myai-worker-live`，成功完成数据库队列快照后更新 `/tmp/myai-worker-health`。Kubernetes 模板通过 `exec` 分别检查 liveness 与 readiness 标记是否在 15 秒内：数据库轮询失败会让 Pod 暂时退出 Service 就绪集合，但只要轮询线程仍运行就不会因依赖故障而自动重启；轮询线程停止则由 liveness 触发重启。该检查只适用于 `worker` 模式，不开放 HTTP 管理端口。Prometheus 告警规则统一位于 `deploy/k8s/base/agent-alerts.yaml`，覆盖 Collector/Tempo target、队列等待、过期租约、近 5 分钟失败 Run、Hikari 连接池和 Worker 队列轮询失败、队列指标缺失及单副本失联；实例心跳使用 Pod 的 `service.instance.id` 标签。Collector 指标过期窗口为 5 分钟，单副本失联告警通常约 7 分钟后触发。阈值是运维起点，不是业务 SLO。Kustomize 从该文件生成 Prometheus ConfigMap，`promtool` 测试也读取同一文件。Testcontainers 已验证本地 Collector 到 Prometheus 格式的指标名称及 `service.instance.id` 标签映射；L5 已部署单副本 Collector、Prometheus、Tempo、Grafana 和双副本 Worker，9 条 Prometheus 告警规则已加载，包含近期失败 Run、Worker 持久队列轮询失败、Worker 队列指标缺失、单个 Worker 副本失联与 Tempo target 不可用告警。**2026-11-14 L5 已部署并验证 Tempo 2.10.10（7 天保留、10 GiB 同节点 PVC）与 Grafana 12.4.15（内部 ClusterIP、匿名访问关闭）；Tempo/Grafana 均 Ready。合成 Trace 的 Collector 接收、Tempo Trace ID 查询及 Grafana Tempo 数据源均已验证。Grafana 已预置 MyAI Prometheus 数据源和 Runtime Overview 仪表盘，含队列、过期租约、近期失败、数据库连接池、Collector 与 Tempo 健康 7 个面板；仪表盘 API 返回 7 个面板，Prometheus 数据源健康检查 OK，逐条 PromQL 查询成功。** Collector 启用 1 GiB 同节点持久发送队列，发送重试最长 1 小时；Tempo/队列 PVC 都不提供节点故障恢复或备份保证。Trace 资源包含 `deployment.environment.name=l5`，Prometheus Collector/Tempo 活动目标带 `environment=l5`；跨环境规范仍待制定。后端首次不可用期间已超过原 5 分钟重试期限的 span 已丢弃，不能恢复。Grafana 关闭默认插件预装与联网更新，避免运行时动态安装。告警通知按用户决定短期暂缓，多副本队列 Gauge 汇总继续使用 max/单实例值。
 
-Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖当前 10 条规则的 `for` 延迟、触发注释和阈值边界，包括 Collector 与 Tempo 目标不可用、Worker JVM Heap 超过池上限汇总 85% 并持续 5 分钟；Heap 指标不代表容器 RSS 或 cgroup/native 内存。运行 `bash ops/tests/prometheus-alerts-test.sh`；脚本默认调用与 L5 相同版本的 `prom/prometheus:v3.16.0` 镜像，也可用 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 覆盖。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
+Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kustomize 从该文件生成运行时 ConfigMap，`promtool` 确定性测试也直接读取同一文件。测试覆盖当前 10 条规则的 `for` 延迟、触发注释和阈值边界，包括 Collector 与 Tempo 目标不可用、Worker JVM Heap 超过池上限汇总 85% 并持续 5 分钟；Heap 指标不代表容器 RSS 或 cgroup/native 内存。运行 `bash ops/tests/prometheus-alerts-test.sh`。macOS ARM64/AMD64 默认从 Prometheus v3.16.0 官方 Release 下载对应 `promtool`，按脚本固定的官方归档 SHA-256 校验并缓存到 `target/prometheus-tool-cache`；CI 和其他平台使用 `prom/prometheus:v3.16.0` 容器镜像。可设置 `PROMETHEUS_TEST_IMAGE` 与 `PROMETHEUS_TEST_PLATFORM` 强制容器路径，也可用 `PROMETHEUS_TEST_CACHE_DIR` 更改本机缓存目录。CI 运行同一脚本。此测试验证规则表达式和 firing 状态，不验证实际告警投递、生产监控可用性或阈值是否满足业务 SLO。
 
 ## 工具与分层
 
@@ -202,7 +206,11 @@ PostgreSQL 集成测试与 `OtlpExporterIntegrationTest` 通过 Testcontainers �
 
 评测受总样例数、总模型调用数、总工具调用数和总时限约束；剩余预算不足时会标记后续样例未运行，不会超预算继续发请求。每个 case 记录成功状态、失败类别、预期/实际工具、模型调用数、工具调用数、时长、Token 用量和协作计划摘要。配置 `requiredAnswerPhrases` / `forbiddenAnswerPhrases` 的场景会按大小写敏感的子串匹配检查回答，并把 `answerAssertionsMatched` 写入受限报告；没有配置断言时该字段为 `null`。它只验证明确写出的短语条件，不替代人工语义质量评审。Token 缺失就记为未知。可设置 `AGENT_EVAL_INPUT_USD_PER_MILLION_TOKENS` 与 `AGENT_EVAL_OUTPUT_USD_PER_MILLION_TOKENS` 提供单价，报告才会计算费用估值；这不是供应商账单金额。`manualRating` 留给人工评分；通过标准包括任务成功、工具选择、可选的协作计划及已配置的回答短语断言，不代表回答整体质量已经达标。2026-11-12 的真实模型报告中，时间查询样例调用了真实 Java 系统时钟，但回答误称其为模拟数据；工具结果来源元数据和 v2 回答短语断言已补充。2026-11-14 使用 DeepSeek Flash 对 v2 五个样例重新评测，5/5 通过，完成 9 次模型调用与 3 次工具调用，记录 4,447 个输入 Token、406 个输出 Token；时区样例的回答断言匹配。费用未知（未配置单价），人工评分仍为空；该小型评测不证明一般回答质量。
 
-报告包含模型回答，POSIX 文件系统上使用权限为 0700 的独立目录和 0600 的文件；默认写入已加入 Git 和 Docker build context 忽略规则的 `var/agent-evaluations`，不会被 `mvn clean` 删除。`.gitignore` 与 `.dockerignore` 还排除常见证书/密钥扩展名、Java keystore、Kubernetes 配置以及 `.kube/`、`.ssh/` 目录。如果在只读容器中运行，需要把 `AGENT_EVAL_REPORT_DIRECTORY` 指向一个专用可写挂载点。评测数据中的用户提示会写入 PostgreSQL Run 历史，执行前应确认数据库保留策略适用。该入口不读取 Fake/Mock ModelClient，也不把真实评测加入 CI。
+每次实验现在另有 PostgreSQL 评测记录，保存数据集 ID/版本/规范化 SHA-256、Evaluator 版本、模型和非敏感汇总；case 结果保存状态、分数、调用数、耗时、可用 Token 与关联 `runId`，不复制 prompt、answer 或工具参数。逐 case 状态在调用前标为 `RUNNING`，结果返回后立即持久化。原本的本地 JSON 报告仍会生成，默认在 `var/agent-evaluations` 使用 POSIX 0700/0600 权限，并且已脱去 prompt/answer 正文。
+
+交互模式支持 `/eval list [limit]`、`/eval show <id>`、`/eval compare <baseline> <candidate>`、`/eval export <id> <path>`；`/eval run` 保持显式调用并要求 `AGENT_EVAL_ENABLED=true`。比较只对完全相同的数据集身份/哈希、Evaluator 版本、Workflow 模式和 case/score 集合给出回归结论，并展示逐 Evaluator 变化、样例数、工具选择、Token 覆盖、耗时分位数、调用数及可得费用估值；这些是样本观察值，不宣称统计显著。进程中断后须同时满足评测 Deadline 和执行租约均已过期才可执行 `/eval recover <id>`：运行中 case 标为 `INDETERMINATE`，未开始 case 标为 `SKIPPED`，并以 fencing 阻止旧执行者继续写入；不会重发未知结果的模型请求。无法取消供应商侧已受理的模型请求，因此其可能在租约过期后仍产生费用；恢复不会撤销外部请求或工具副作用。
+
+JUnit/Fake 与 Testcontainers 覆盖数据集校验、确定性 Evaluator、增量落库、状态迁移、Run 删除时保留评测分数、兼容性比较、脱敏导出及中断恢复；普通 CI 不读取 Provider 密钥、不访问真实模型。固定样例用于检查已知控制流程，不能证明真实模型质量、统计显著性或生产可用性。验收结果以[阶段四总结](docs/stages/phase-04-summary.html)为准。
 
 ## CI 凭据与镜像扫描
 

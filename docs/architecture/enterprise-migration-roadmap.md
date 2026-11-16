@@ -128,6 +128,7 @@ Run Observation 已在单 Agent 与 Supervisor 执行期间保持 scope；模型
 | P2：协作调度 | 子任务表有数据库原子 claim、父/子 fencing 及父 Run 更换 owner 后立即重领；Run 级共享模型/工具预算使用数据库事务、父 Run 行锁与稳定 reservation ID 做原子、幂等预留，避免过量分配和重复计费。持久 Run Worker 和子任务 Worker 均可跨实例轮询领取工作；Supervisor 以 PostgreSQL 中的任务状态等待结果。CLI 默认本地执行，Worker 部署可显式切换数据库队列路径。 | Fake Store、PostgreSQL 和确定性模型测试覆盖活跃父 Run 扫描、竞争 claim、续租、父 Run refence 后立即重领和旧 token 失效、子任务依赖/检查点/取消以及共享预算。L5 在途 Run 多 Pod 崩溃恢复演练已通过；当前工具仅有本地计算、时间查询和模拟天气，没有外部副作用工具；未来添加此类工具前须逐项定义幂等、补偿和审计策略。MQ 按负载条件评估，不默认部署。 |
 | P2：可靠性与数据治理 | 工具调用未知副作用不自动重放；终态 Run 可按配置保留周期清理，删除操作有不含敏感运行数据的审计记录。工具调用状态变更已有独立追加式审计表及 CLI 查询，审计记录不含参数、结果或异常原文，并与 Run 保留删除级联。按用户当前决策，不重建数据库备份/恢复能力；L5 既有归档 PVC/PV 和归档数据已删除。当前没有外部副作用工具；未来此类工具的幂等/补偿协议须作为上线门槛。技术字段与存储流向已盘点，业务数据分类、删除请求流程尚未确认；详见[技术数据盘点](../security/data-inventory.md)。节点/数据卷损坏可能造成持久 Run 数据丢失。 | Run 清理单元与 PostgreSQL 级联/审计集成测试通过。备份/恢复脚本与保留测试已随用户决策移除，之前的手动加密备份与隔离恢复仅属于历史验证。继续明确 exactly-once 限制，并按工具逐项定义幂等、补偿或人工核对方式。 |
 | P2：评测与交付验收 | Fake/Provider Stub、固定评测集与显式真实评测 Runner 已提供；CI 工作流含全历史凭据扫描、测试、告警规则测试、容器构建/扫描、配置扫描和默认分支推送后的镜像发布；Action SHA、基础镜像 digest 与 Dependabot 更新监测已配置。 | 固定 CI 样例不依赖真实模型；GitHub Actions run `43799525352` 对代码提交 `7a9d0df` 的 `verify` 与 `publish-images` 均成功，本机完整 `clean verify` 180 项通过。GHCR Runtime index digest 为 `sha256:9dc54d027067967fbdb561616d896eb416725dc971b52fed555b1bfb0535ff91`，代理 index digest 为 `sha256:3a4a678134f4dfc57c53c170aba5a4bcee57dc2eeb87238c2ac47ffd06cf448a`；两个 SHA 标签均可读取且含 `linux/amd64` manifest。首次 GHCR 登录返回 `denied`，重跑发布 Job 成功；未确认首次拒绝原因。GitHub `main` 已设置分支保护：PR 至少 1 个审批、必须通过 `verify` 且分支保持最新、解决全部讨论，禁止强制推送和删除；管理员不强制执行保护规则。此次直接推送绕过了 PR/必需状态检查要求，CI 随后通过。真实模型评测 5/5 只匹配编码断言，不构成整体质量证明；人工评分和业务单价仍缺。|
+| P1：评测实验生命周期（阶段四，2026-11-16） | 版本化数据集身份与规范化哈希、Evaluator ID/version（含 JSON Schema 与预期失败类别）、PostgreSQL/Flyway V7 实验与 case 状态、增量评分、owner lease/heartbeat/fence、中断未知结果收敛、兼容比较、脱敏 JSON 导出和 `/eval` CLI 已实现。无自动清理；真实 Provider 仍须显式启用，普通 CI 使用 Fake。 | `mvn clean verify` 204 项通过、0 失败/错误/跳过；Postgres/OTel Testcontainers 实际执行。`image-digests-test.sh`、L5 Kustomize 渲染及 `git diff --check` 通过。阶段验收时 Docker 告警测试被镜像层拉取阻塞；2026-11-16 后续使用固定 SHA-256 的官方 Prometheus v3.16.0 macOS ARM64 `promtool` 运行同一规则测试，10 条规则成功，新增 macOS 原生校验归档路径，容器路径保留用于 CI/其他平台。L5 API 当时不可达，未部署；源码 V7 尚未发布到 L5，现场最近已确认数据库 schema v6。详见[阶段四总结](../stages/phase-04-summary.html)，不得把本地功能验收描述为已部署或生产就绪。|
 
 不要把 4 CPU 单节点 L5 宣称为高可用生产集群。它适合当前开发、集成或受控验证；节点故障时不中断需要多节点 K3s/Kubernetes 和具备故障切换能力的持久存储。数据库与 Trace 备份/恢复已按项目决策移除，不属于当前交付；因此单节点或 PVC 损坏可能造成 Run、Checkpoint 与 Trace 不可恢复。若未来业务提出灾难恢复目标，须另行明确范围和责任后再决策，不应将其表述为本方案当前待实现功能。
 
@@ -136,6 +137,10 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 ## 7. 后续工作分类与验收边界
 
 本路线图的后续项按当前授权与输入划分，避免将已明确排除的能力列成未完成实现：
+
+### 阶段五启动前置里程碑：完成阶段四交付闭环
+
+阶段四本地功能验收已通过，但阶段四源码改动仍处于工作区，L5 最近已确认的 PostgreSQL schema 为 v6，尚无阶段四对应提交的远端 CI 与 L5 部署验收证据。因此阶段五 Worker 契约暂不启动。先审核并提交阶段四变更，完成当前代码的本地全量验证、GitHub Actions 验证/适用的镜像发布，再按部署前资源核验规则将同一不可变镜像部署到 L5，确认 Flyway V7、Worker/数据库/观测健康且已有 Run 数据无意外变化。详细工作项与通过条件见[阶段五需求草案的启动前置里程碑](phase-05-requirements.md)。阶段四总结中的 204 项本地测试和此前 GitHub Actions 成功记录属于各自记录的历史事实，不能替代对当前阶段四提交的验证。
 
 ### 当前可继续实施
 
