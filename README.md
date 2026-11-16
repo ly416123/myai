@@ -22,11 +22,13 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 
 ### l5 环境
 
-`l5` 指 `ly@192.168.122.55`。2026-11-13 复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致；28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
+`l5` 指 `ly@192.168.122.55`。2026-11-16 现场复核为单节点 K3s v1.36.4+k3s1、4 CPU、约 7.15 GiB 内存，节点 Ready；应用容器由 K3s containerd 管理。K3s Secret 静态加密已启用并完成既有集群密钥轮换，最终状态为 `Enabled / reencrypt_finished` 且密钥哈希一致；28 个当前 Secret 对象的 value 和 old_value 均为加密数据（没有读取 Secret 内容）。
 
 MyAI 已在独立 `myai` namespace 运行 PostgreSQL 16、双副本 Worker、OTel Collector、Prometheus、Tempo 与 Grafana，所有 Service 均为 ClusterIP；NetworkPolicy 默认拒绝该 namespace 入站和出站，只放行列明的内部服务流量。模型 Provider 请求通过专用 Squid HTTP CONNECT 代理；Worker/任务 Pod 只能连代理，代理只允许 `api.deepseek.com:443`，不能绕过代理直接访问公网。应用镜像以 `linux/amd64` 导入 L5 containerd，Provider Key 通过只读 Secret 文件挂载，模型 API Key 在 HTTPS 隧道内传输。Flyway 已运行至 schema v6，Worker、Collector、Prometheus、Tempo、Grafana 和 PostgreSQL 均 Ready。Prometheus 抓取应用、Collector 与 Tempo 指标，保留 10 条运行/可观测性告警规则，其中包含 Worker JVM Heap 持续超过最大值 85% 的告警；告警仅记录在本地，通知投递暂缓。MyAI 不提供数据库备份/恢复能力；PostgreSQL 数据卷或单节点损坏可能导致 Run 与检查点丢失。指标表达式使用 Collector 实际导出的 `myai_` 前缀。内置控制台 `/consoles/agent-overview.html` 展示 Worker 队列、过去 5 分钟失败 Run 数及 Hikari 连接池指标。Grafana Runtime Overview 仪表盘包含队列、租约、失败、连接池、Collector 和 Tempo 健康面板。L5 已演练 Tempo 暂停时 Collector 持久队列在 Collector 重启后恢复投递一条合成 Trace；该结果不代表节点/磁盘恢复或零丢失保证。PostgreSQL 与监控/Trace 数据存于单节点 local-path PVC，不提供节点级高可用或异地恢复。K3s Secret 静态加密已启用并完成既有对象轮换核验。PostgreSQL 已启用 TLS，Worker 通过 CA 与服务名校验连接。**当前迭代以功能实现和运行流程验证为重点；按项目约束忽略中间件镜像 CVE，不为此升级版本或构建自维护派生镜像。**Prometheus 当前为 v3.16.0，按用户决定不升级；扫描记录见[运维手册](docs/operations/l5-runbook.md)。
 
 L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数据持久化限制见[运维手册](docs/operations/l5-runbook.md)。
+
+**2026-11-16 现场状态：** Worker 2/2、模型出站代理 2/2，PostgreSQL、Collector、Prometheus、Tempo、Grafana 均 Ready，四类 PVC Bound；PostgreSQL schema v6。节点约 12% CPU、45% 内存（约 4.8 GiB 可用内存），根文件系统约 81 GiB 可用；memory requests 为 33% CPU/38%，limits 为 150% CPU/91%，三个节点压力条件均为 False。Prometheus 10 条规则全部健康、2 个 target UP、无活动告警；Tempo `/ready` 和 Grafana 数据库健康检查成功。全部 MyAI Pod 曾在 09:36:20（Asia/Shanghai）同步停止，PostgreSQL/监控日志记录正常终止信号，主机在 09:36:45 启动；Worker 记录 `Error/143`、代理记录 `Unknown/255`。证据与主机重启期间的集群级停止相符，未观察到 OOM/节点压力，但没有确认重启发起方。L5 是单节点开发/集成环境，不提供节点故障恢复。
 
 ## 环境与运行
 
