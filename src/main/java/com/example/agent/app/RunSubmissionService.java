@@ -12,25 +12,42 @@ import java.util.UUID;
 public final class RunSubmissionService {
     private final RunStore store;
     private final Duration taskTimeout;
+    private final RunSubmissionPolicy submissionPolicy;
 
     public RunSubmissionService(RunStore store, Duration taskTimeout) {
-        if (store == null || taskTimeout == null || taskTimeout.isZero() || taskTimeout.isNegative()) {
+        this(store, taskTimeout, RunSubmissionPolicy.noAuthentication());
+    }
+
+    public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy) {
+        if (store == null || taskTimeout == null || taskTimeout.isZero() || taskTimeout.isNegative()
+                || submissionPolicy == null) {
             throw new IllegalArgumentException("Invalid Run submission configuration");
         }
         this.store = store;
         this.taskTimeout = taskTimeout;
+        this.submissionPolicy = submissionPolicy;
     }
 
     public RunRecord submitSingle(String input) {
-        return submit(input, RunType.SINGLE_AGENT);
+        return submitSingle(input, CallerContext.localCli());
+    }
+
+    public RunRecord submitSingle(String input, CallerContext caller) {
+        return submit(input, RunType.SINGLE_AGENT, caller);
     }
 
     public RunRecord submitCollaborative(String input) {
-        return submit(input, RunType.COLLABORATIVE);
+        return submitCollaborative(input, CallerContext.localCli());
     }
 
-    private RunRecord submit(String input, RunType type) {
+    public RunRecord submitCollaborative(String input, CallerContext caller) {
+        return submit(input, RunType.COLLABORATIVE, caller);
+    }
+
+    private RunRecord submit(String input, RunType type, CallerContext caller) {
         if (input == null || input.isBlank()) throw new IllegalArgumentException("Task input must not be blank");
+        if (caller == null) throw new IllegalArgumentException("Caller context must be provided");
+        submissionPolicy.validate(caller, type);
         String normalized = input.trim();
         RunRecord run = RunRecord.create(UUID.randomUUID().toString(), normalized, taskTimeout, type);
         run.addMessage(Message.user(normalized));

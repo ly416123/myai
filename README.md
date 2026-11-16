@@ -161,6 +161,7 @@ Prometheus 告警规则统一保存在 `deploy/k8s/base/agent-alerts.yaml`，Kus
 - ModelClient：模型厂商适配边界；DeepSeek 实现负责协议映射、超时和模型错误分类。
 - AgentRuntime：手写模型/工具循环、Run 状态机、Checkpoint、预算、恢复和日志。
 - RunStore：检查点存储抽象；当前应用以 PostgreSQL 为主存储，内存 Store 用于测试，JSON Store 仅保留本地回归用途。
+- RunSubmissionService：后台 Run 的应用提交边界；使用 `CallerContext` 与可替换的 `RunSubmissionPolicy` 预留调用方校验扩展点。当前 CLI 身份只是未认证的 `local-cli` 标识，生产策略不做身份验证或授权，也不会持久化调用者标识。
 - AgentTool / ToolRegistry / ToolExecutor：工具契约、注册、Draft 2020-12 JSON Schema 参数校验、执行和异常分类。
 - 演示工具：本地四则运算、Java 时区时间、固定模拟天气。
 

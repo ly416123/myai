@@ -7,6 +7,7 @@ import com.example.agent.workflow.RunStatus;
 import com.example.agent.workflow.RunStore;
 import com.example.agent.workflow.ToolExecutionAudit;
 import com.example.agent.workflow.ToolExecutionAuditStore;
+import com.example.agent.app.CallerContext;
 import com.example.agent.app.RunSubmissionService;
 import com.example.agent.evaluation.AgentEvaluationConfig;
 import com.example.agent.evaluation.AgentEvaluationResult;
@@ -97,9 +98,11 @@ public final class Main implements ApplicationRunner {
                     } else if (input.startsWith("/multi-resume ")) {
                         printRunResult(collaborative.resume(input.substring("/multi-resume ".length()).trim()));
                     } else if (input.startsWith("/enqueue ")) {
-                        printQueuedRun(submissions.submitSingle(input.substring("/enqueue ".length())));
+                        printQueuedRun(submissions.submitSingle(
+                                input.substring("/enqueue ".length()), CallerContext.localCli()));
                     } else if (input.startsWith("/multi-enqueue ")) {
-                        printQueuedRun(submissions.submitCollaborative(input.substring("/multi-enqueue ".length())));
+                        printQueuedRun(submissions.submitCollaborative(
+                                input.substring("/multi-enqueue ".length()), CallerContext.localCli()));
                     } else if (input.startsWith("/multi ")) {
                         printRunResult(collaborative.runTracked(input.substring("/multi ".length()).trim()));
                     } else if (input.startsWith("/")) {

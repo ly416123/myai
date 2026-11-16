@@ -16,6 +16,7 @@ import com.example.agent.tools.WeatherTool;
 import com.example.agent.workflow.PostgresRunStore;
 import com.example.agent.workflow.RunStore;
 import com.example.agent.workflow.RunPollingWorker;
+import com.example.agent.app.RunSubmissionPolicy;
 import com.example.agent.app.RunSubmissionService;
 import com.example.agent.evaluation.AgentEvaluationConfig;
 import com.example.agent.evaluation.AgentEvaluationRunner;
@@ -86,8 +87,14 @@ public class AgentConfiguration {
     }
 
     @Bean
-    RunSubmissionService runSubmissionService(RunStore store, AgentProperties properties) {
-        return new RunSubmissionService(store, properties.getTaskTimeout());
+    RunSubmissionPolicy runSubmissionPolicy() {
+        return RunSubmissionPolicy.noAuthentication();
+    }
+
+    @Bean
+    RunSubmissionService runSubmissionService(RunStore store, AgentProperties properties,
+                                              RunSubmissionPolicy policy) {
+        return new RunSubmissionService(store, properties.getTaskTimeout(), policy);
     }
 
     @Bean
