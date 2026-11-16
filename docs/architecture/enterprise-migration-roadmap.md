@@ -1,10 +1,10 @@
 # 阶段 1–3 企业级架构升级方案
 
-**文档状态：** 本路线图当前批准范围内的实现与验收已完成（2026-11-16）；尚未确认的业务目标和用户明确暂缓/移除的能力单独列示，不计作本轮范围缺陷，也不代表生产就绪。代码提交 `7a9d0df8d2de01de447d6cf4376d072625bffab5` 已推送至 `main`；GitHub Actions run `43799525352` 的 `verify` 与重跑后的 `publish-images` 均成功。两个 SHA 标签镜像可从 GHCR 读取，Runtime OCI index digest 为 `sha256:9dc54d027067967fbdb561616d896eb416725dc971b52fed555b1bfb0535ff91`，代理为 `sha256:3a4a678134f4dfc57c53c170aba5a4bcee57dc2eeb87238c2ac47ffd06cf448a`，均含 `linux/amd64` manifest。本机完整 `mvn clean verify` 通过 180 项测试，0 失败、0 错误、0 跳过；PostgreSQL 与 OTel Collector Testcontainers 均实际执行。L5 最新只读快照见下文，仍为 9/9 Pod Ready；本轮身份上下文实现不涉及 Worker 执行逻辑或数据库 schema，因此没有滚动 L5。单节点 local-path PVC 不提供节点故障恢复保障。
+**文档状态：** 本路线图当前批准范围内的实现与验收已完成（2026-11-16）；尚未确认的业务目标和用户明确暂缓/移除的能力单独列示，不计作本轮范围缺陷，也不代表生产就绪。代码提交 `7a9d0df8d2de01de447d6cf4376d072625bffab5` 已推送至 `main`；GitHub Actions run `43799525352` 的 `verify` 与重跑后的 `publish-images` 均成功。两个 SHA 标签镜像可从 GHCR 读取，Runtime OCI index digest 为 `sha256:9dc54d027067967fbdb561616d896eb416725dc971b52fed555b1bfb0535ff91`，代理为 `sha256:3a4a678134f4dfc57c53c170aba5a4bcee57dc2eeb87238c2ac47ffd06cf448a`，均含 `linux/amd64` manifest。本机完整 `mvn clean verify` 通过 180 项测试，0 失败、0 错误、0 跳过；PostgreSQL 与 OTel Collector Testcontainers 均实际执行。文档提交 `26c24100157042c6a91f23a88aa80cbdf8a24359` 的 GitHub Actions run `43800467303` 中 `verify` 与 `publish-images` 也均成功。L5 最新只读快照见下文，仍为 9/9 Pod Ready；本轮身份上下文实现不涉及 Worker 执行逻辑或数据库 schema，因此没有滚动 L5。单节点 local-path PVC 不提供节点故障恢复保障。
 
 **范围决定：HTTP API/生产认证授权、告警通知投递、CA 签名密钥托管/故障轮换、数据库/Trace 备份与异地恢复当前不交付；Prometheus v3.16.0 按用户决定保留。项目当前迭代约束：以功能实现和运行流程验证为验收重点，忽略 PostgreSQL、Prometheus、Tempo、Grafana 等中间件镜像 CVE；不为这些发现投入版本升级或自维护派生镜像工作，除非用户之后另行要求。扫描结果仅为信息性运维记录，不是本阶段功能交付阻塞项或待办事项，也不据此宣称漏洞已修复或项目通过安全认证。** GHCR 授权、镜像发布和拉取验证已完成；业务 SLO 和数据分类/保留策略仍待确认。当前三项演示工具不产生外部副作用；未知工具结果不会自动重放。
 
-**远端同步状态（2026-11-14）：** 只读 `git ls-remote origin refs/heads/main` 返回 `5c1c8e07e7d80b412657c153df38e14ee945d147`，与本地 `main` 一致。该推送包含本地备份/恢复移除和本轮部署更新。GitHub Actions run `43556974597` 的 `verify` Job 全部通过（Maven、Gitleaks、Prometheus 规则、镜像摘要、Docker 构建及 Trivy 扫描）；`publish-images` 因 GHCR Registry 拒绝写入失败。包版本检查显示 `myai-agent` 新版本没有 tags，`myai-model-egress-proxy` 包尚不存在；目前没有从 GHCR 拉取验证。恢复镜像发布的条件是 GHCR 包对仓库 `ly416123/myai` 授予 Actions Write 权限。不要将 GHCR 发布失败描述为 CI 验证失败，也不要宣称镜像已发布。
+**阶段历史说明：** 本路线图中较早日期的远端状态和验收记录按当时证据保留；若与本文开头的 2026-11-16 当前状态或后续按日期追加的记录冲突，以较新的记录为准。2026-11-14 的 GHCR 拒绝写入、旧 `main` SHA 等内容属于历史快照，不代表当前发布状态。
 ## 1. 结论
 
 MyAi 的目标是企业级 Agent Runtime。阶段 1–3 形成了可运行的核心循环、运行状态和 Supervisor–Worker 协作，但早期为控制复杂度采用的 CLI、本地 JSON Store、单进程调度和本地日志，不具备多实例生产运行所需的持久化一致性、集中可观测和运维能力。
