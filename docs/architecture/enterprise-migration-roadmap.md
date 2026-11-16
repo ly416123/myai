@@ -1,6 +1,6 @@
 # 阶段 1–3 企业级架构升级方案
 
-**文档状态：** 持续实施中（2026-11-14）。提交 `15d81db4d18974da6ad32b9ea823c56a19823775` 的 GitHub Actions `verify` 与 `publish-images` 均成功。该提交的 GHCR Runtime 与模型代理镜像 OCI index digest 分别为 `sha256:1bb5251dfee439046bae682f07af000b273540b9cb43eb8e6e84fa86b655e84f` 和 `sha256:d61031a6ece951739ac411f2385fc668477907e55e7e80c944dc56001d80571d`，均包含 `linux/amd64` manifest。L5 最近一次已验证的 Worker `myai-agent:l5-20261114-runtime-current`（基于完整 Dockerfile 镜像叠加当前应用 JAR 层构建；2/2 Ready、0 次重启；manifest `sha256:0ce43b84944beac5d2895e1f7760d895680e151ed4cebb489ae64ce64edd7378`、config/imageID `sha256:2a96238b72f79da559e8770815a70f5ac95eec8ea500bcc81c6bfda8e141eaa3`、JAR 与本地工作区 SHA-256 均为 `2b0a037f94682528bd2b1c4b4caf5de92e239bf919d70d4dbe12a1a530e347e6`）、模型代理 `myai-model-egress-proxy:l5-20261113`（2/2 Ready）、PostgreSQL、Collector、Prometheus、Tempo、Grafana；当时 Prometheus 10 条规则健康、2 个抓取目标为 UP、无活动告警。此为 2026-11-14 历史现场证据；本次会话当前 kube context 为本地 `kind-agentteams`，无 L5 context，SSH TCP/22 也不可达，未能重新核对 L5 实时状态。第三方镜像引用已固定为 Registry 可验证的 `linux/amd64` manifest digest；Grafana、Tempo、PostgreSQL 已按该摘要滚动部署，Collector/Prometheus 原运行摘要已匹配。Worker 基础镜像完整 Dockerfile 构建 manifest 为 `sha256:9bb463f87263bc8dfcf82ca71d69a57e2b8bb26c1aad81afe591e5ea16f08f22`。GitHub Actions 对提交 `5c1c8e0` 的 `verify` 与 `publish-images` Job 均已通过。重跑发布后，两个镜像均已推送到 GHCR，并通过 Registry manifest 检查。截图中 Manage Actions access 的 `Admin` 是 Actions 发布相关权限；下方 Codespaces access 的 `Read` 仅用于 Codespaces，不影响镜像发布。数据库和 Trace 备份/恢复能力已从本地期望状态及 L5 移除，单节点 local-path PVC 不提供节点恢复保障。详细证据按日期记录在本文件末尾；较早记录为对应时点的历史事实。
+**文档状态：** 持续实施中（2026-11-16）。GitHub Actions run `43569096878` 对提交 `b58e444a85a7a5167733615b13775261b187b952` 的 `verify` 与 `publish-images` 均成功。该提交的 GHCR Runtime 与模型代理镜像 OCI index digest 分别为 `sha256:53cfade0620173e7d0913677d8bdf4f3697a015610ecb3e32c5c175d3ba6223c` 和 `sha256:8d7e3cbd9e6f5862d5ef3ffbd5139be01ceee8f35ee73d23b65e425cca3e8d9b`，均含 `linux/amd64` manifest。2026-11-16 已通过 `~/.kube/l5-k3s.yaml` 重新核验 L5：单节点 K3s、MyAI 9 个 Pod 均 Ready；Worker 仍运行 `myai-agent:l5-20261114-runtime-current`，代理为 `myai-model-egress-proxy:l5-20261113`；Prometheus 10/10 规则健康、2/2 targets UP、0 个活动告警，Tempo `/ready` 返回正常，Grafana health 数据库状态为 `ok`。所有 MyAI Pod 各有一次最近重启记录；初始探针短暂失败后已恢复，节点压力条件均为 False。资源快照与后续任务分配见第 8 节。数据库和 Trace 备份/恢复能力已按用户决定移除；单节点 local-path PVC 不提供节点故障恢复保障。
 
 **范围决定：HTTP API/生产认证授权、告警通知投递、CA 签名密钥托管/故障轮换、数据库/Trace 备份与异地恢复当前不交付；Prometheus v3.16.0 按用户决定保留。项目当前迭代约束：以功能实现和运行流程验证为验收重点，忽略 PostgreSQL、Prometheus、Tempo、Grafana 等中间件镜像 CVE；不为这些发现投入版本升级或自维护派生镜像工作，除非用户之后另行要求。扫描结果仅为信息性运维记录，不是本阶段功能交付阻塞项或待办事项，也不据此宣称漏洞已修复或项目通过安全认证。** GHCR 授权、镜像发布和拉取验证已完成；业务 SLO 和数据分类/保留策略仍待确认。当前三项演示工具不产生外部副作用；未知工具结果不会自动重放。
 
@@ -158,9 +158,25 @@ L5 当前是单节点开发/集成环境，不是 HA 生产集群；没有数据
 
 ## 8. 本次不做的事情与待确认业务指标
 
-**最近一次已验证环境快照（2026-11-14）：** L5 单节点 K3s v1.36.4+k3s1 作为开发/集成环境，Worker 2/2（`l5-20261114-runtime-current`）、出站代理 2/2，PostgreSQL、Collector、Prometheus、Tempo、Grafana 均 Ready。PostgreSQL schema v6；Prometheus 10 条规则健康、无活动告警，通知投递暂缓；Tempo 到 Grafana 的合成 Trace 查询通过。数据位于同节点 local-path PVC，没有数据库/Trace 备份恢复或节点级恢复保障。该现场快照是在先前可访问 L5 时取得；本轮当前 kubectl context 为本地 `kind-agentteams`，且 L5 SSH TCP/22 不可达，因此本次不能确认这些组件仍处于该状态。Worker 镜像与摘要详见该历史部署记录和 [L5 运维手册](../operations/l5-runbook.md)。
+**最近一次已验证环境快照（2026-11-16）：** L5 单节点 K3s v1.36.4+k3s1 作为开发/集成环境，Worker 2/2、出站代理 2/2，PostgreSQL、Collector、Prometheus、Tempo、Grafana 均 Ready；PostgreSQL、Prometheus、Tempo 与 Collector 队列 PVC 均 Bound。PostgreSQL schema v6；Prometheus 10 条规则健康、2 个 target UP、无活动告警，通知投递暂缓；Tempo `/ready` 正常、Grafana health 返回数据库 `ok`。使用 `~/.kube/l5-k3s.yaml` 的 `l5` context 完成核验；SSH 登录本身仍返回 publickey/password 认证拒绝，不影响该 kubeconfig 的集群访问。所有 MyAI Pod 各有 1 次最近重启记录，Worker 和 Tempo 在启动初期的探针失败随后恢复；节点 MemoryPressure、DiskPressure、PIDPressure 均为 False，检查窗口内未发现 OOM 事件。数据位于同节点 local-path PVC，没有数据库/Trace 备份恢复或节点级恢复保障。Worker 镜像与摘要详见第 6 节和 [L5 运维手册](../operations/l5-runbook.md)。
 
-**当前明确不交付：** HTTP API 与生产认证授权、告警通知投递、CA 签名密钥托管/故障轮换；PostgreSQL/Trace 备份恢复已移除；中间件镜像 CVE 不触发版本升级或自维护派生镜像。验收时远端 `main` 为 `15d81db4d18974da6ad32b9ea823c56a19823775`，对应 `verify` 与 `publish-images` 均通过，两个 GHCR 镜像已按该提交 SHA 发布并验证可读取。`main` 分支已要求 PR 审批和 `verify` 检查；管理员不强制执行保护规则。当前完整 Maven 构建和工作流验证结果见验收记录。
+### 本机与 L5 资源分工（2026-11-16）
+
+本轮复核使用本机硬件、Colima 与 L5 Kubernetes 的实时数据，调整后续任务放置：
+
+| 环境 | 核验到的资源状态 | 适合承担的工作 |
+|---|---|---|
+| 本机宿主 | Apple Silicon，10 个逻辑 CPU、16 GiB 内存；macOS Data 卷 460 GiB 中约 428 GiB 已用，仅约 3 GiB 可用。 | 源码、文档、Git 和轻量非容器检查。避免容器镜像构建、镜像拉取及 Testcontainers。 |
+| 默认 Colima | 2 CPU、4 GiB；Docker 数据卷约 99 GiB，其中 95 GiB 已用、可用空间为 0。 | 暂不承担 Docker 工作。不要对共享 Docker 数据运行全局 prune。 |
+| `agentteams-poc` Colima | 2 CPU、2 GiB；Docker 数据卷约 20 GiB，其中 18 GiB 已用、约 1.2 GiB 可用。该 profile 正在运行。 | 不用于本项目容器构建或清理；不要停止或清理其他项目资源。 |
+| GitHub Actions | 最近 `main` 的 CI `verify` 与 `publish-images` 均成功；使用独立托管 Runner。 | 完整 Maven `clean verify`、Testcontainers、OCI 镜像构建/扫描和 GHCR 发布。 |
+| L5 K3s | 4 CPU、约 7.15 GiB 内存。`kubectl top` 实测约 11% CPU、43% 内存；requests 约 33% CPU/38% 内存，limits 合计 150% CPU/91% 内存。根文件系统约 80.7 GiB 可用。节点 MemoryPressure、DiskPressure、PIDPressure 均为 False。 | 已部署运行时的 smoke/integration 检查、数据库 TLS、Trace 链路和受控 Worker 接管验证；一次只做一个有界场景，不在当前 limits 下并行压测或叠加常驻构建工作负载。 |
+
+L5 的 MyAI 9 个 Pod 当前均 Ready，但每个容器各有 1 次近期重启记录；两个 Worker 曾有启动探针失败，Tempo 曾短暂未 Ready，随后恢复。重启退出状态包含 `143`/`255`，其余为正常完成；本次事件检查没有发现 OOM 或节点内存/磁盘压力证据，因此不把重启原因归结为资源耗尽。PostgreSQL 与 Prometheus 数据目录分别约 46.5 MiB 和 20.7 MiB；Tempo/Collector 镜像未包含 `du`，未测得其 PVC 实际占用，不能用 PVC 容量代替实际使用量。该快照仅适用于 2026-11-16；后续迭代开始前重新核验资源，且保留 `agentteams` 命名空间现有 0 副本和 CronJob suspended 状态。
+
+优先使用 GitHub Actions 处理完整测试和容器构建；本机磁盘或 Colima 数据盘恢复足够空间后，再评估有限的本地 Testcontainers。L5 保持单节点集成环境定位，新增构建/测试 Job 前先复查内存 limit 余量，避免和 Worker、PostgreSQL、监控服务争抢资源。没有运行大负载基准，不据当前快照承诺吞吐、可用性或 SLO。
+
+**当前明确不交付：** HTTP API 与生产认证授权、告警通知投递、CA 签名密钥托管/故障轮换；PostgreSQL/Trace 备份恢复已移除；中间件镜像 CVE 不触发版本升级或自维护派生镜像。最近验证的远端 `main` 为 `b58e444a85a7a5167733615b13775261b187b952`，GitHub Actions run `43569096878` 的 `verify` 与 `publish-images` 均通过，两个 GHCR 镜像已按该提交发布并确认包含 `linux/amd64` manifest。`main` 分支已要求 PR 审批和 `verify` 检查；管理员不强制执行保护规则。当前完整 Maven 构建和工作流验证结果见验收记录。
 
 目标并发/峰值、可用性目标、业务 SLO、数据分类、Run/消息实际保留期、删除请求流程、模型数据出境策略和成本单价仍需业务输入；在收到明确值前不设定业务承诺，Run 自动清理继续关闭（`AGENT_RUN_RETENTION_PERIOD=PT0S`）。Fake/Mock 仅为测试替身，不代表生产身份认证或授权能力。
 

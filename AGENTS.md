@@ -7,6 +7,10 @@
 - 已完成阶段的限制只描述该阶段实际交付，不构成后续架构的永久约束。尤其当前本地 JSON RunStore 和单进程调度不是企业生产部署的最终方案。
 - [阶段 1–3 企业级架构升级方案](docs/architecture/enterprise-migration-roadmap.md)是当前企业化改造基线。后续实现要先更新方案中的事实/决策状态，再按优先级落地；文档计划、代码现状和已验收能力必须明确区分。
 - `ly@192.168.122.55` 后续称为 L5 环境，Kubernetes 配置位于 `~/.kube/l5-k3s.yaml`（context `l5`）。2026-11-14 只读核对确认单节点 K3s v1.36.4+k3s1、4 CPU、约 7.2 GiB 内存，节点 Ready；早先约 87 GiB 根卷可用空间是 2026-11-12 的历史快照，不能视为当前容量。MyAI namespace 当前运行 Worker 2 副本、模型出站代理 2 副本，以及 PostgreSQL、OTel Collector、Prometheus、Tempo、Grafana 各 1 副本。其他业务 Deployment/StatefulSet 保持 0 副本，既有 CronJob 保持 suspended；系统组件与 MyAI 工作负载运行。其他命名空间的配置、PVC、已完成/失败 Pod 不属于 MyAI，不要删除或启动；部署、扩容或变更前需重新核验集群和资源余量。
+- 后续迭代按本机、GitHub Actions 和 L5 的实际资源分工，不把重任务默认堆到同一侧。开始构建、集成测试或部署前重新检查宿主机可用磁盘、Colima profile 的 CPU/内存/Docker 数据盘、L5 节点压力/实际使用/requests 与 limits、PVC 和其他工作负载；不要依据旧容量快照。
+- 2026-11-16 资源快照：本机 Apple Silicon 为 10 逻辑 CPU、16 GiB 内存，macOS Data 卷仅约 3 GiB 可用。默认 Colima profile 为 2 CPU/4 GiB，Docker 数据卷 99 GiB 中约 95 GiB 已用且无可用空间；`agentteams-poc` profile 为 2 CPU/2 GiB，20 GiB Docker 卷中约 18 GiB 已用、约 1.2 GiB 可用。禁止在这些容量下运行本地镜像构建、拉取大量镜像或 Testcontainers；不要运行 `docker system prune`，也不要清理来源不明的镜像、volume 或 build cache。
+- 同日 L5 单节点为 4 CPU/约 7.15 GiB。检查时实际使用约 11% CPU、43% 内存，MemoryPressure/DiskPressure/PIDPressure 均为 False，根文件系统约 80.7 GiB 可用；但 Kubernetes 已分配约 38% 内存 requests、91% 内存 limits，CPU limits 合计 150%。MyAI 的 9 个 Pod 均 Ready，但各有 1 次最近重启记录，Worker 启动探针和 Tempo readiness 曾短暂失败；检查窗口内未发现 OOM 或节点压力事件，不能据此断言重启原因。非 MyAI 业务 Deployment/StatefulSet 维持 0 副本、既有 CronJob 维持 suspended。
+- 资源放置：本机用于源码、文档、Git 和轻量、不启动容器的检查；在 Docker 数据卷或宿主可用空间不足时不做本地容器构建/集成测试。GitHub Actions 用于全量 `mvn clean verify`、Testcontainers、镜像构建/扫描和 GHCR 发布。L5 用于已部署系统的运行时检查、少量受控数据库/Trace/Worker 恢复验证；避免并行压测、长期构建或新增常驻工作负载。若需要在 L5 运行额外 Job，先核对当前内存/磁盘压力和 limits 余量，并一次只运行一个有明确资源上限的场景。
 - 每阶段总结应把“该阶段明确范围内的验收结果”和“面向企业目标仍未解决的工程缺口”分开陈述，不把阶段通过等同于生产就绪。
 
 ## 阶段完成后的总结文档
