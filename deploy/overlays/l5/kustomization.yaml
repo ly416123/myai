@@ -5,8 +5,8 @@ resources:
   - ../../k8s
 images:
   - name: registry.example.invalid/myai
-    newName: docker.io/library/myai-agent
-    newTag: l5-20261114-runtime-current
+    newName: ghcr.io/ly416123/myai-agent
+    newTag: fe209355ddfcce9538b911a4b94ac3517a575b1d
   - name: registry.example.invalid/myai-model-egress-proxy
     newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113

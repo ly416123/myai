@@ -157,10 +157,23 @@
       <li>Lease fencing 可阻止已失租的 owner 继续写评测记录或推进下一 case，但不能撤销供应商已接受的模型请求、取消外部工具副作用或避免网络分区期间已发出的费用。没有工具幂等键/事务协议时不保证 exactly-once。</li>
       <li>状态 lease 续租依赖本进程调度线程和数据库可用性；数据库连接中断会让当前执行失去写权限。需要等待 deadline 与 lease 都过期后再恢复。测试覆盖 lease 过期和 stale owner 拒写，但没有压力测试长时间数据库中断/调度停顿。</li>
       <li>时延摘要只描述每次实验有限样本的均值、分位数和样本数，不做显著性检验，不设伪造性能阈值。固定数据集也不能代表真实用户分布。</li>
-      <li>评测历史没有自动清理策略，按项目决定持续保留；Run 正文仍受现有 RunStore 保留配置影响。L5 当前代码未部署，数据库 schema 的现场版本仍需下次连通后确认；历史可确认版本为 v6。</li>
+      <li>评测历史没有自动清理策略，按项目决定持续保留；Run 正文仍受现有 RunStore 保留配置影响。阶段四功能验收时（2026-11-16）L5 尚未部署 V7；后续启动前置里程碑的部署结果见下节。</li>
       <li>本阶段没有 HTTP API、生产认证授权、Web UI、Langfuse、外部通知或新评测平台；这与“评测引擎 + PostgreSQL 持久化 + CLI”的范围一致。</li>
-      <li>下一步建议：L5 恢复可达后先只读确认 schema 和资源，再决定是否发布含 V7 的应用；后续再结合已批准数据分类和保留策略评估真实模型集、成本门槛和多次运行统计方法。</li>
+      <li>下一步建议：进入阶段五需求确认与 Worker 契约实现；真实模型质量、业务数据分类和保留策略仍需结合业务要求评估。</li>
     </ul>
+  </section>
+
+  <section id="phase-five-precondition">
+    <h2>8. 阶段五启动前置里程碑：阶段四交付闭环（2026-11-17）</h2>
+    <p><strong>结论：通过。</strong>本节记录功能验收之后的远端与 L5 交付，不改变上文架构图所对应的 2026-11-16 本地功能验收时间点。</p>
+    <ul>
+      <li>阶段四提交：<code>fe209355ddfcce9538b911a4b94ac3517a575b1d</code>，已推送到 <code>main</code>。GitHub Actions <a href="https://github.com/ly416123/myai/actions/runs/43977781637">run 43977781637</a> 中 <code>verify</code> 与 <code>publish-images</code> 均成功；本机执行 <code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code>，204 项测试通过，0 失败、0 错误、0 跳过。</li>
+      <li>远端发布核验：Runtime 镜像 SHA 标签为 <code>fe209355ddfcce9538b911a4b94ac3517a575b1d</code>，GHCR 的 linux/amd64 manifest 为 <code>sha256:2a72c184118cad308aa207100126891d2fedd4bbee8010f29b016454a19ea43f</code>；代理镜像同 SHA 标签的 linux/amd64 manifest 为 <code>sha256:2069428a52d8b947402d18960a7d283753fdbc63cd4f346a854351d2c4ba0556</code>。Registry 内容读取和摘要核对成功。</li>
+      <li>L5 部署：<code>deploy/overlays/l5</code> 的 Worker Deployment 声明使用 GHCR 不可变 SHA 标签；滚动完成后 Worker 2/2 Ready、0 新重启，`kubectl rollout status` 成功。节点单次采样约 401m CPU（10%）和 4619Mi 内存（63%）；MyAI 9 个 Pod 均 Ready。其他命名空间未变更。L5 通过 OCI/镜像归档导入同一 GHCR 镜像内容；CRI 显示本地导入别名 <code>docker.io/library/import-2026-11-17:fe20935</code>，Pod imageID 使用该本地 repoDigest；GHCR 上游 amd64 manifest 与配置摘要已核对，Deployment 仍引用 GHCR SHA 标签。</li>
+      <li>数据库与观测：PostgreSQL Flyway 最新成功版本为 V7；<code>evaluation_run</code> 可查询且记录数为 0。迁移前后 Run 总数均为 12，状态分布为 CANCELLED 1、FAILED 1、SUCCEEDED 10，RUNNING 0。Prometheus 10/10 告警规则健康、2/2 targets UP、活动告警 0；Tempo <code>/ready</code> 返回 <code>ready</code>，Grafana 数据库健康状态为 <code>ok</code>。</li>
+      <li>本地辅助验收：<code>bash ops/tests/prometheus-alerts-test.sh</code> 成功；<code>bash ops/tests/image-digests-test.sh</code> 的 5 个固定第三方 linux/amd64 digest 均匹配；<code>kubectl kustomize deploy/overlays/l5</code> 与 Worker server-side dry-run 成功。L5 检查不提交真实用户 Run、不调用真实模型；没有执行峰值压测或节点故障恢复测试。</li>
+    </ul>
+    <p>该里程碑关闭阶段五的交付前置条件。它证明本阶段的已知功能、发布链路和本次部署检查按预期工作，不代表生产 SLO、真实模型回答质量或单节点故障恢复已获保证。</p>
   </section>
 
   <footer class="note">

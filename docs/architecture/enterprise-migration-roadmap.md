@@ -140,7 +140,7 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 
 ### 阶段五启动前置里程碑：完成阶段四交付闭环
 
-阶段四本地功能验收已通过，但阶段四源码改动仍处于工作区，L5 最近已确认的 PostgreSQL schema 为 v6，尚无阶段四对应提交的远端 CI 与 L5 部署验收证据。因此阶段五 Worker 契约暂不启动。先审核并提交阶段四变更，完成当前代码的本地全量验证、GitHub Actions 验证/适用的镜像发布，再按部署前资源核验规则将同一不可变镜像部署到 L5，确认 Flyway V7、Worker/数据库/观测健康且已有 Run 数据无意外变化。详细工作项与通过条件见[阶段五需求草案的启动前置里程碑](phase-05-requirements.md)。阶段四总结中的 204 项本地测试和此前 GitHub Actions 成功记录属于各自记录的历史事实，不能替代对当前阶段四提交的验证。
+**状态：已完成（2026-11-17）。** 阶段四交付提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机验收、该提交对应的 GitHub Actions `verify`/`publish-images`、GHCR 镜像 amd64 manifest 核验和 L5 Worker 部署均已完成。L5 成功运行 Flyway V7；评测表可查询；Worker 2/2 Ready，PostgreSQL 与观测组件健康，已有 12 条 Run 及其状态分布保持不变。部署时通过归档导入 GHCR Runtime 镜像；L5 CRI 将镜像呈现为本地生成的 `docker.io/library/import-2026-11-17:fe20935` 名称，Deployment 声明仍使用不可变 GHCR SHA 标签，镜像配置摘要与 GHCR 的 amd64 manifest 配置匹配。详细命令、指标和限制见[阶段四总结](../stages/phase-04-summary.html)。该里程碑已关闭阶段五的启动前置条件，但阶段五 Worker 契约实现仍未开始。
 
 ### 当前可继续实施
 

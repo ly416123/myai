@@ -22,7 +22,7 @@
 - L5 已部署与验收提交匹配的应用镜像，Flyway 为 V7，Worker、数据库和观测组件健康；数据库迁移及部署检查没有造成已有 Run 数据变更。
 - 阶段四总结和路线图记录实际提交、CI run、镜像摘要、部署状态及验证命令；只有全部条件满足后，才把阶段五状态从“候选”改为“可启动”。
 
-**当前状态：未完成。** 阶段四总结已有本机 204 项测试通过的历史证据，但当前工作区仍有未提交改动；L5 最近记录为 schema v6，当前工作区尚无对应的阶段四部署验收证据。
+**当前状态：前置里程碑已完成（2026-11-17）；阶段五尚未开始，可进入阶段五需求确认与实现。** 阶段四提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机 `clean verify` 为 204 项通过、0 失败/错误/跳过；GitHub Actions run [43977781637](https://github.com/ly416123/myai/actions/runs/43977781637) 的 `verify` 与 `publish-images` 均成功。GHCR Runtime 镜像 amd64 manifest 为 `sha256:2a72c184118cad308aa207100126891d2fedd4bbee8010f29b016454a19ea43f`，代理镜像 amd64 manifest 为 `sha256:2069428a52d8b947402d18960a7d283753fdbc63cd4f346a854351d2c4ba0556`。L5 的 Worker 已按 GHCR SHA 标签完成 2/2 滚动；数据库成功迁移至 V7，评测表可查询，既有 12 条 Run 及状态分布未改变；Prometheus 10/10 条规则健康、2/2 targets UP、无 firing 告警，Tempo 和 Grafana 健康。详细证据和镜像导入说明见[阶段四总结](../stages/phase-04-summary.html)与[企业升级路线图](../architecture/enterprise-migration-roadmap.md)。
 
 ## 1. 背景与当前缺口
 
