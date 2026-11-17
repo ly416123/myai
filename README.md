@@ -19,6 +19,8 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段六验收总结：Agent 配置版本、发布与运行时切换（本机、GitHub Actions 与 L5 候选部署验收通过；PR 等待审批）](docs/stages/phase-06-summary.html)
 - [阶段六需求与范围](docs/plans/phase-06-requirements.md)
 - [记忆能力候选规划（阶段六之后）](docs/plans/memory-capabilities-roadmap.md)
+- [阶段七结构化记忆设计规格（实现分支）](docs/superpowers/specs/2026-11-18-memory-system-design.md)
+- [阶段七验收总结：显式结构化记忆](docs/stages/phase-07-summary.html)
 
 每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。阶段总结中的架构图是各阶段验收时点的历史快照，不代表当前企业架构的完整形态，可分别查看：[阶段一历史快照](docs/stages/phase-01-summary.html#architecture)、[阶段二历史快照](docs/stages/phase-02-summary.html#architecture)、[阶段三历史快照](docs/stages/phase-03-summary.html#architecture)。当前企业化架构与交付状态以[升级路线图](docs/architecture/enterprise-migration-roadmap.md)为准。详见项目根目录的 `AGENTS.md`。
 
@@ -89,7 +91,32 @@ CLI 命令：
 - /tool-audit <runId>：按时间查看该 Run 的工具步骤状态变更记录；审计不包含工具参数、结果正文或异常原文。
 - /resume <runId>：从检查点恢复一个非终态运行。
 - /enqueue <任务>、/multi-enqueue <任务>：提交单 Agent 或协作 Run，由后台 Worker 异步消费。
+- /memory help：显式管理结构化偏好/事实记忆；只有通过该命令才能新增、修改或删除。
 - /exit 或 /quit：退出。
+
+### 显式结构化记忆（阶段七）
+
+首版面向当前受控 CLI 操作者，不把未认证的 `local-cli` 当作用户身份，不提供多用户隔离。记忆写入不从普通对话自动提取，只接受明确的管理命令：
+
+```text
+/memory remember answer.language preference 回答使用中文
+/memory list
+/memory show answer.language
+/memory update answer.language preference 默认使用简体中文
+/memory delete answer.language
+```
+
+记忆以 PostgreSQL 结构化条目保存，默认 namespace 为 `default`。可通过 `AGENT_MEMORY_NAMESPACE`、`AGENT_MEMORY_NAMESPACE_LIMIT`、`AGENT_MEMORY_MAX_ENTRIES` 和 `AGENT_MEMORY_MAX_CHARACTERS` 配置命名空间及检索上限；上限分别不超过 500 条、5 条和 2000 Unicode 码点。新 Run 创建时按当前输入进行确定性词项检索，并把所选条目快照固定在 Run 检查点；恢复继续使用原快照，不重新检索。协作 Workflow 只向 Supervisor 提供记忆快照，Worker 仅收到计划明确派发的输入和依赖结果。
+
+删除会让后续检索不可见，并清空活动条目的 key/正文；PostgreSQL 中保留不含 key/正文的删除元数据事件。已经创建的 Run 快照仍按 Run 当前保留策略保存，删除记忆不等于擦除历史 Run。读取失败时以空的 degraded 快照继续任务，CLI 管理写失败则返回受控错误。首版不使用向量库、embedding、独立 RAG 服务或 LLM Wiki；中英文检索仅是有界的确定性词面匹配，不保证语义召回或回答质量。
+
+阶段七回归使用 Fake、确定性模型与 PostgreSQL Testcontainers：
+
+```bash
+DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn -Dtest=MemoryRetrieverTest,MemoryServiceTest,PostgresMemoryStoreTest,RunRecordTest,RunSubmissionMemorySnapshotTest,MemoryPrivacyContractTest test
+```
+
+这些固定样例验证已知存储、快照、命令和数据边界，不证明真实模型的长期记忆质量、语义检索效果或生产可用性。阶段七本机验收记录见[阶段七总结](docs/stages/phase-07-summary.html)。
 
 ### Agent 配置版本与发布（阶段六）
 
@@ -121,7 +148,7 @@ Revision 的稳定 ID 是 `rev-<sha256>`。候选 Evaluation 通过阶段四固�
 
     mvn clean test
 
-Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。长期记忆不在当前路线图范围。L5 已部署 Collector、Prometheus、Tempo 和 Grafana，10 条 Prometheus 告警规则均已加载；包括 Worker JVM Heap 高占用、队列轮询失败和 Tempo 查询后端不可用告警。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；中间件镜像漏洞扫描不作为当前功能验收门槛，扫描策略详见下方 CI 说明。
+Fake 样例的耗时仅检查字段和调度行为，不能证明真实并行提速；固定任务也不能证明真实模型质量。已对 DeepSeek Flash 连续执行两次 5 样例受控评测，两次工具选择与协作路由均符合预期；样例规模仍不足以评定自然语言回答质量或生产可用性。跨进程协调由 PostgreSQL Worker 路径支持；L5 已验证空队列 Pod 自动补建、在途 Run 的 Worker SIGKILL 后由 peer Pod 接管，以及合成模型请求期间重启 PostgreSQL 后同一 Run 成功结束。阶段七首版将长期记忆限定为显式结构化偏好/事实记录，不引入向量检索或 Wiki；详情见记忆章节。L5 已部署 Collector、Prometheus、Tempo 和 Grafana，10 条 Prometheus 告警规则均已加载；包括 Worker JVM Heap 高占用、队列轮询失败和 Tempo 查询后端不可用告警。按用户决定，短期只保留本地规则与告警状态，不投递通知。用户已选择 Prometheus 继续使用 v3.16.0，不再投入升级；中间件镜像漏洞扫描不作为当前功能验收门槛，扫描策略详见下方 CI 说明。
 
 ## Workflow 状态与恢复语义
 

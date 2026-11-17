@@ -11,6 +11,7 @@
 | 工具结果 | `run_message.payload` 中 role=`TOOL` 的消息；检查点中亦可能包含 | 工具返回正文。当前工具是本地计算、系统时钟和模拟天气；未来工具结果可能包含外部系统数据 | 日志和 Trace 不记录完整工具参数/结果；持久对话历史会保存模型所需工具结果 | 未来每种工具的数据分级、最小化、脱敏和删除责任 |
 | 工具参数与调用请求 | assistant 消息 JSON `toolCalls.arguments`；`run_message` 与检查点 | 模型生成的 JSON 参数，可包含模型提示的复制数据或调用者输入 | Schema 校验后执行；工具审计表不复制参数；工具异常日志只记录分类/异常类型 | 对参数正文的保存必要性、字段级遮盖、访问审计及留存时限 |
 | 子任务计划和结果 | `child_task.payload` | 任务描述、依赖、交付物标识、任务消息/步骤、执行结果、Trace Context；描述与结果可能含业务正文 | 与父 Run 同一事务存储并随父 Run 外键级联；Trace Context 不传播 baggage | 是否需要独立子任务访问控制/保留、Trace Context 合规要求 |
+| 显式结构化记忆 | PostgreSQL `agent_memory`；操作元数据在 `agent_memory_event`；创建 Run 时选中的内容也进入 `run_checkpoint.payload` | 单一受控 CLI 操作者 namespace 中的偏好/事实 key 与正文；Run 快照保存被检索条目和策略版本 | 仅显式 `/memory remember/update/delete` 修改；事件表不含 key/正文且禁止更新/删除；删除清空活动表 key/正文并留 tombstone；已有 Run 快照仍按 Run 保留策略保存；检索最多 5 条、总提示 2000 Unicode 码点 | namespace 默认 `default`，当前没有可信用户身份或多用户隔离；确认可保存的记忆数据类型、Run 快照保留及后续主体删除流程 |
 | 执行状态及预算 | `agent_run`、`run_step`、`run_budget_reservation`、`tool_execution_audit` | Run/Step/Task ID、状态、时间、模型/工具调用数、Token 数（不可用时标为未知）、租约/fencing、工具名、失败类别 | 追加式工具状态审计不含参数、结果或异常原文；Run 删除时审计行级联删除；Token 用量是可选供应商元数据 | 运维审计期限、ID 可关联性、预算/用量数据的业务归属 |
 | 人工评测报告 | 默认忽略目录 `var/agent-evaluations` | 合成样例与模型回答；真实评测报告可能含 provider 返回文本、模型/工具调用统计和人工评分 | 独立目录 POSIX 权限 0700、报告文件 0600；Git 和 Docker build context 均忽略；`mvn clean` 不删除；没有自动过期清理 | 真实评测允许的数据类别、目录托管/访问者、复制/归档与删除要求 |
 
@@ -42,9 +43,10 @@
 
 ## 5. 来源与复核入口
 
-- PostgreSQL schema：`src/main/resources/db/migration/V1__create_run_store.sql` 至 `V6__append_tool_execution_audit.sql`。
+- PostgreSQL schema：`src/main/resources/db/migration/` 下的 Flyway 迁移；阶段七记忆表由 `V13__create_agent_memory_store.sql` 创建。
 - 持久化/级联：`src/main/java/com/example/agent/workflow/PostgresRunStore.java` 与 `RunRecord.java`。
 - 消息/工具协议：`src/main/java/com/example/agent/model/Message.java`、`ToolCall.java`、`src/main/java/com/example/agent/collaboration/ChildTaskRecord.java`。
 - Provider 请求与脱敏异常分类：`src/main/java/com/example/agent/client/DeepSeekModelClient.java`。
+- 显式记忆与 Run 固定快照：`src/main/java/com/example/agent/memory/`、`src/main/java/com/example/agent/workflow/RunRecord.java`；记忆操作指标只使用固定 operation/result 标签。
 - 评测报告权限和存储：`src/main/java/com/example/agent/evaluation/AgentEvaluationRunner.java`；运行说明见 README 评测章节。
 - L5 当前部署、存储和删除边界：`docs/operations/l5-runbook.md`。

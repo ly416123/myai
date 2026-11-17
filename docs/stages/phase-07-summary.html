@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阶段七验收总结：显式结构化记忆</title>
+  <style>
+    :root { color-scheme: light; --ink:#172b4d; --muted:#52637a; --line:#d7e0ec; --blue:#eaf2ff; --green:#e6f7ef; --amber:#fff4dc; --purple:#f2ebff; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#f5f7fb; color:var(--ink); font:16px/1.65 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+    main { max-width:1120px; margin:0 auto; padding:34px 22px 72px; }
+    h1,h2,h3 { line-height:1.3; }
+    h1 { font-size:2rem; margin:.2em 0; }
+    h2 { margin-top:2.2em; border-bottom:1px solid var(--line); padding-bottom:.35em; }
+    h3 { margin-bottom:.4em; }
+    p,li { color:#24364f; }
+    .meta { color:var(--muted); }
+    .callout { border-left:5px solid #25855a; background:var(--green); padding:14px 18px; border-radius:8px; }
+    .note { border-left:5px solid #d8991f; background:var(--amber); padding:12px 18px; border-radius:8px; }
+    section,figure { background:white; border:1px solid var(--line); border-radius:12px; padding:20px; margin:18px 0; }
+    figure { overflow-x:auto; }
+    svg { display:block; width:100%; min-width:800px; height:auto; }
+    .layer { fill:#f7f9fc; stroke:#9aabc2; stroke-width:1.5; rx:12; }
+    .blue { fill:var(--blue); stroke:#5b8def; stroke-width:1.5; rx:10; }
+    .green { fill:var(--green); stroke:#4b9d74; stroke-width:1.5; rx:10; }
+    .purple { fill:var(--purple); stroke:#8e70cc; stroke-width:1.5; rx:10; }
+    .amber { fill:var(--amber); stroke:#d8a23c; stroke-width:1.5; rx:10; }
+    .node { fill:white; stroke:#71839d; stroke-width:1.5; rx:9; }
+    .label { font-size:15px; font-weight:700; fill:#172b4d; }
+    .small { font-size:12px; fill:#52637a; }
+    .arrow { fill:none; stroke:#52637a; stroke-width:2; marker-end:url(#arrow); }
+    .dashed { stroke-dasharray:6 5; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    th,td { border:1px solid var(--line); padding:10px 12px; text-align:left; vertical-align:top; }
+    th { background:#f0f4fa; }
+    code { background:#eef2f7; padding:.1em .35em; border-radius:4px; overflow-wrap:anywhere; }
+    pre { background:#172b4d; color:#f5f8ff; padding:14px 16px; border-radius:8px; overflow:auto; }
+    a { color:#175fc2; }
+    @media (max-width:700px) { main { padding:20px 12px 50px; } section,figure { padding:14px; } h1 { font-size:1.55rem; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="meta">MyAI · 阶段验收记录 · 2026-11-18</p>
+    <h1>阶段七：显式结构化记忆</h1>
+    <p class="meta">验收基线：从阶段六已验证提交 <code>a20f925b2cc974664562c0b305cfe87b6ffe1a67</code> 创建独立分支 <code>codex/phase-07-memory-system</code>。本总结描述该分支的阶段七实际交付形态，不代表阶段六 PR 状态或 L5 部署状态。</p>
+  </header>
+
+  <section class="callout">
+    <h2 style="margin-top:0;border:0">验收结论</h2>
+    <p><strong>阶段七首版功能验收通过。</strong> 本机完整 Maven 构建成功；281 项测试全部通过，0 失败、0 错误、0 跳过。PostgreSQL 16 Testcontainers 实际执行 Flyway V13、记忆 CRUD、Run 检查点快照往返及并发边界。阶段验收只说明本文限定范围已交付，不等于生产就绪；当前仍没有可信用户身份/多用户隔离，也未在 L5 部署阶段七镜像或迁移。</p>
+  </section>
+
+  <section>
+    <h2>1. 阶段目标与前阶段问题</h2>
+    <p>阶段六的配置版本可以固定每个 Run 的系统提示词、模型参数、工具权限与 Worker 契约，但跨 Run 没有独立的长期记忆：单次对话只保存在该 Run 的消息历史和检查点中。阶段七在不替换 Agent Runtime / Workflow 控制循环的前提下，添加可显式管理、可审计、可检索的偏好/事实记忆，并让 Run 使用固定的记忆快照。</p>
+    <p>本阶段范围由用户确认：当前单一受控 CLI 操作者；只在明确的记忆管理命令上写入；新 Run 自动检索少量相关记忆；协作任务只把需要的信息放进相应上下文。阶段六合并、发布和 L5 部署不属于本阶段验收范围。</p>
+  </section>
+
+  <section>
+    <h2>2. 本阶段实现内容</h2>
+    <ul>
+      <li>新增 PostgreSQL 结构化记忆表 <code>agent_memory</code>，保存 namespace、key、类型、正文、版本和活动状态。Flyway V13 加入 metadata-only 的 <code>agent_memory_event</code>；事件不含 key/正文且由数据库触发器禁止修改或删除。</li>
+      <li><code>MemoryService</code> 提供显式记忆新增、查找、列表、更新、删除和 Run 创建时的检索快照。默认最多 500 条活动记忆；同一 namespace 的新增通过 advisory lock、唯一索引和事务内计数共同执行。</li>
+      <li>删除采用 tombstone：活动表清空 key 与正文并留下版本事件，允许之后重用 key。更新/删除使用版本 CAS，操作记录与内容修改在同一事务提交。</li>
+      <li>确定性检索使用 Unicode NFKC 规范化、key 精确命中优先、英文词项和中文相邻二元组重合排序；最多选择 5 条，注入文本最多 2000 个 Unicode 码点。检索失败返回空的 <code>degraded</code> 快照以继续任务；管理写失败受控报错。</li>
+      <li>同步 Run、协作 Run 和后台队列 Run 都在首次落盘前固定 <code>MemoryContextSnapshot</code>。RunStore 保存快照；恢复继续使用已持久化内容，不会再次查询当前记忆库。旧检查点无此字段时按空快照处理。</li>
+      <li>单 Agent、Supervisor 规划/汇总及协作 NO_SPLIT fallback 可获得快照。子 Worker 的模型请求不注入父级完整记忆，只接收计划明确解析的任务输入与依赖结果。</li>
+      <li>CLI 新增 <code>/memory help|list|show|remember|update|delete</code>。普通自然语言中的“记住”不会直接写入记忆。</li>
+      <li>新增低基数 Micrometer 计数器和耗时指标，只含固定 operation/result 标签；不把 namespace、key、query、正文或异常内容写入日志、指标标签或记忆审计事件。</li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <h2>3. 阶段完成时的整体分层架构</h2>
+    <p class="meta">架构快照时间：2026-11-18，阶段七本机验收通过时。图示包含既有阶段六能力与本阶段新增记忆能力；虚线表示可观测数据流，不表示跨服务的生产部署或独立记忆服务。</p>
+    <figure>
+      <svg viewBox="0 0 1100 650" role="img" aria-labelledby="arch-title arch-desc">
+        <title id="arch-title">MyAI 阶段七整体分层架构</title>
+        <desc id="arch-desc">CLI 接入层调用 MemoryService 管理记忆，并把普通任务交给 RunSubmissionService、AgentRuntime 或 CollaborativeWorkflow。新 Run 获取记忆快照并写入 PostgreSQL Run checkpoint。Runtime 将固定快照渲染到模型请求；Worker 不接收父级记忆。MemoryStore、RunStore、配置与评测存储共用 PostgreSQL。Micrometer/OTel 只记录有限元数据。</desc>
+        <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#52637a"/></marker></defs>
+        <rect class="layer" x="18" y="18" width="1064" height="84"/>
+        <text class="label" x="38" y="43">接入层</text>
+        <rect class="blue" x="250" y="50" width="230" height="38"/><text class="label" x="300" y="75">命令行 Main</text>
+        <rect class="blue" x="590" y="50" width="260" height="38"/><text class="label" x="635" y="75">显式 /memory 管理命令</text>
+
+        <rect class="layer" x="18" y="116" width="1064" height="105"/>
+        <text class="label" x="38" y="143">应用服务 / 记忆管理层</text>
+        <rect class="green" x="205" y="160" width="240" height="45"/><text class="label" x="242" y="188">RunSubmissionService</text>
+        <rect class="green" x="500" y="160" width="230" height="45"/><text class="label" x="550" y="188">MemoryService</text>
+        <rect class="green" x="790" y="160" width="250" height="45"/><text class="label" x="835" y="188">MemoryRetriever / Policy</text>
+
+        <rect class="layer" x="18" y="235" width="1064" height="124"/>
+        <text class="label" x="38" y="262">Workflow / Harness 层</text>
+        <rect class="purple" x="180" y="284" width="245" height="54"/><text class="label" x="226" y="307">AgentRuntime</text><text class="small" x="201" y="328">固定快照注入单 Agent 模型请求</text>
+        <rect class="purple" x="465" y="284" width="345" height="54"/><text class="label" x="532" y="307">CollaborativeWorkflow</text><text class="small" x="490" y="328">Supervisor 可见；Worker 仅取任务输入/依赖</text>
+        <rect class="amber" x="850" y="284" width="200" height="54"/><text class="label" x="878" y="307">MemoryContextSnapshot</text><text class="small" x="875" y="328">Run 级固定、可恢复</text>
+
+        <rect class="layer" x="18" y="373" width="1064" height="103"/>
+        <text class="label" x="38" y="400">模型与工具能力适配层（横向能力）</text>
+        <rect class="node" x="220" y="420" width="250" height="42"/><text class="label" x="278" y="447">ModelClient / DeepSeek</text>
+        <rect class="node" x="530" y="420" width="240" height="42"/><text class="label" x="575" y="447">ToolRegistry / Executor</text>
+        <rect class="node" x="825" y="420" width="225" height="42"/><text class="label" x="864" y="447">WorkerRegistry / 契约</text>
+
+        <rect class="layer" x="18" y="490" width="1064" height="105"/>
+        <text class="label" x="38" y="517">PostgreSQL 持久化层（Flyway V13）</text>
+        <rect class="node" x="105" y="536" width="215" height="45"/><text class="label" x="155" y="564">agent_memory</text>
+        <rect class="node" x="350" y="536" width="210" height="45"/><text class="label" x="388" y="564">metadata audit</text>
+        <rect class="node" x="590" y="536" width="235" height="45"/><text class="label" x="631" y="564">Run / checkpoint</text>
+        <rect class="node" x="855" y="536" width="195" height="45"/><text class="label" x="883" y="564">Config / Evaluation</text>
+
+        <rect class="layer" x="18" y="609" width="1064" height="28"/>
+        <text class="small" x="300" y="628">横切观测：结构化日志 / Micrometer / OTel；不输出记忆正文、key、query 或 namespace</text>
+
+        <path class="arrow" d="M700 88 L620 158"/><path class="arrow" d="M365 88 L325 158"/>
+        <path class="arrow" d="M445 182 L500 182"/><path class="arrow" d="M730 182 L790 182"/>
+        <path class="arrow" d="M320 205 L300 284"/><path class="arrow" d="M620 205 L640 284"/>
+        <path class="arrow" d="M900 205 L950 284"/><path class="arrow" d="M850 310 L810 310"/>
+        <path class="arrow" d="M300 338 L345 420"/><path class="arrow" d="M640 338 L345 420"/>
+        <path class="arrow" d="M640 338 L650 420"/><path class="arrow" d="M740 338 L930 420"/>
+        <path class="arrow" d="M890 338 L700 536"/><path class="arrow" d="M610 462 L700 536"/>
+        <path class="arrow" d="M315 205 L210 536"/><path class="arrow" d="M580 205 L455 536"/>
+        <path class="arrow dashed" d="M510 338 C500 470 500 510 480 536"/>
+        <path class="arrow dashed" d="M565 338 C560 500 580 570 600 609"/>
+      </svg>
+      <figcaption>应用与记忆逻辑仍运行在同一 MyAI 进程，记忆数据和 Run 检查点共用 PostgreSQL；本阶段没有引入向量数据库、独立检索服务或新的常驻服务。</figcaption>
+    </figure>
+
+    <h3>Run 创建、记忆检索与恢复</h3>
+    <figure>
+      <svg viewBox="0 0 1060 220" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Run 记忆快照生命周期</title>
+        <desc id="flow-desc">显式管理命令维护记忆。新 Run 创建时按输入检索并在首次保存前固定快照。模型请求只渲染 Run 自己的快照。恢复不再查当前记忆；删除使未来检索看不到条目，但不擦除已有 Run 快照。</desc>
+        <defs><marker id="arrow2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#52637a"/></marker></defs>
+        <g fill="none" stroke="#52637a" stroke-width="2" marker-end="url(#arrow2)">
+          <path d="M185 74 L250 74"/><path d="M430 74 L495 74"/><path d="M675 74 L740 74"/><path d="M835 112 L835 155"/><path d="M740 178 L675 178"/>
+        </g>
+        <rect class="blue" x="20" y="42" width="165" height="64"/><text class="label" x="46" y="68">显式 /memory</text><text class="small" x="40" y="90">记忆 CRUD</text>
+        <rect class="green" x="250" y="42" width="180" height="64"/><text class="label" x="274" y="68">新 Run 输入</text><text class="small" x="269" y="90">单 Agent / 协作 / 入队</text>
+        <rect class="amber" x="495" y="42" width="180" height="64"/><text class="label" x="527" y="68">有限确定性检索</text><text class="small" x="523" y="90">最多 5 条 / 2000 码点</text>
+        <rect class="purple" x="740" y="42" width="190" height="64"/><text class="label" x="767" y="68">Run 检查点</text><text class="small" x="757" y="90">固定记忆快照再执行</text>
+        <rect class="node" x="740" y="145" width="190" height="64"/><text class="label" x="773" y="171">恢复 / 模型请求</text><text class="small" x="755" y="193">沿用快照；Worker 不广播</text>
+        <text class="small" x="22" y="158">删除：阻止后续检索，不清除已有 Run 快照</text>
+        <path d="M105 110 C110 188 310 197 495 198" class="arrow dashed"/>
+      </svg>
+      <figcaption>检查点边界是“Run 创建前检索一次并固定”，而不是每轮实时查记忆库；这样恢复的输入稳定可追溯。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>4. 设计选择与替代方案</h2>
+    <table>
+      <thead><tr><th>决策</th><th>主要替代方案</th><th>采用原因与适用边界</th></tr></thead>
+      <tbody>
+        <tr><td>结构化 PostgreSQL 记忆</td><td>向量数据库、独立 RAG 服务、LLM Wiki</td><td>首个场景是可确认的偏好/事实，需版本、显式删除和可审计；固定规模下结构化表更简单。文档检索和语义检索不是本阶段目标。</td></tr>
+        <tr><td>只通过显式管理命令写入</td><td>模型从普通对话自动提取并保存</td><td>避免误记和静默持久化；CLI 没有可信用户身份，因此本版只支持单一受控 namespace，不宣称用户级隔离。</td></tr>
+        <tr><td>确定性词面检索</td><td>向量 embedding / reranker / RAG</td><td>少量结构化偏好可用有界、可重复检索，无需额外模型调用；代价是不能保证语义召回，后续应以评测数据证明需要再引入检索增强。</td></tr>
+        <tr><td>Run 固定快照</td><td>每轮请求都读取“最新记忆”</td><td>恢复请求上下文不随记忆更新而改变，方便追溯；删除只影响后续 Run，历史 Run 快照依现行 Run 保留策略留存。</td></tr>
+        <tr><td>Supervisor 可读，Worker 最小输入</td><td>把父上下文/所有记忆广播到每个 Worker</td><td>减少不相关信息传递并保持既有子任务边界；Worker 只收到计划明确派发的字段与依赖结果。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>5. 实际效果与可重复验证</h2>
+    <p>新 Run 会按输入查询最多 500 条活动记忆候选并把最相关的最多 5 条固定到 Run；向模型注入的完整提示文本受 2000 Unicode 码点上限约束。运行途中更新或删除记忆不会修改已保存 Run 的快照。PostgreSQL 集成测试覆盖 V13 迁移、同 key 冲突、删除后复用 key、版本并发、namespace 并发上限、审计 append-only、内容更新事务回滚，以及 Run 检查点中的快照往返。</p>
+    <p>本阶段没有真实 Provider 质量测试，也没有在 L5 部署。确定性与持久化范围由 Fake、Testcontainers 和模型 stub 覆盖，不能证明真实模型一定遵从偏好或事实正确。</p>
+    <pre><code>DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock \
+TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+mvn clean verify
+
+# 实际结果：281 tests, 0 failures, 0 errors, 0 skipped; BUILD SUCCESS</code></pre>
+    <p>记忆相关 CLI 示例：</p>
+    <pre><code>/memory remember answer.language preference 回答使用中文
+/memory list
+/memory show answer.language
+/memory update answer.language preference 默认使用简体中文
+/memory delete answer.language</code></pre>
+  </section>
+
+  <section>
+    <h2>6. 尚存限制与后续方向</h2>
+    <ul>
+      <li>当前 CLI 操作者标识不是认证身份；单 namespace 默认值不提供用户、团队或租户隔离。真实接入前需定义可信身份与读写授权边界。</li>
+      <li>词面检索容易漏掉语义相关条目；没有向量索引、事实冲突消解、自动来源抽取或 LLM Wiki。</li>
+      <li>删除记忆不删除已持久化 Run 快照；Run 自动保留/删除目前依既有策略处理，默认自动清理关闭。若需要主体级删除，需要单独设计快照索引和删除流程。</li>
+      <li>记忆内容会进入模型请求；向 DeepSeek 发送前仍受项目现有数据处理边界约束。当前凭据模式检测只能拒绝部分常见密钥字面量，不能替代人工数据定级。</li>
+      <li>当前固定回归验证的是有限规则和数据边界，不代表记忆准确率、真实回答质量、语义检索召回率或生产可用性。</li>
+      <li>本阶段在独立阶段七分支验收，未触发 L5 部署，也不改变阶段六合并/发布流程。</li>
+    </ul>
+    <p>下一步应先基于实际调用场景和固定评测样例判断是否需要更强的语义检索、来源管理或身份域隔离，再拆分相应目标；不默认引入 RAG 或自动记忆抽取。</p>
+  </section>
+
+  <footer>
+    <p class="meta">相关文档：<a href="../superpowers/specs/2026-11-18-memory-system-design.md">阶段七设计规格</a> · <a href="../superpowers/plans/2026-11-18-phase-07-memory-system.md">实现计划</a> · <a href="../security/data-inventory.md">数据盘点</a> · <a href="../../README.md">README</a></p>
+  </footer>
+</main>
+</body>
+</html>

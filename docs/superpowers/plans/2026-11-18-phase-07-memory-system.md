@@ -45,6 +45,12 @@
 - `README.md`：添加阶段七总结索引占位（验收通过后才链接正式总结）、CLI 使用与评测范围。
 - `docs/stages/phase-07-summary.html`：仅在完成验收后创建，记录实际证据和阶段时点架构图。
 
+## 执行进度
+
+- 任务 1–5 已完成并分别提交；任务 6 的实现与集成回归已完成，待提交。
+- 任务 7 的隐私/生命周期测试、README 与数据盘点、阶段总结及 HTML 复核已完成；阶段七本机验收通过。
+- 阶段七未推送远端、未部署 L5；不改变阶段六 PR/发布状态。
+
 ## 任务 1：记忆模型与确定性检索
 
 **文件：**
@@ -261,19 +267,7 @@ void queuedRunPinsMemoryBeforeFirstStoreWriteAndResumeDoesNotResolveAgain() {
 
 实际结果：`DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn -Dtest=RunRecordTest,RunSubmissionMemorySnapshotTest,AgentRuntimeTest,CollaborativeWorkflowTest test` 通过，43 项测试，0 失败/错误/跳过。协作测试验证 Supervisor 可以获得父 Run 快照，而 Worker prompt 不包含记忆正文。
 
-- [x] **步骤 5：提交任务 4**
-
-```bash
-git add src/main/java/com/example/agent/workflow/RunRecord.java src/main/java/com/example/agent/runtime/AgentRuntime.java src/main/java/com/example/agent/collaboration/CollaborativeWorkflow.java src/main/java/com/example/agent/app/RunSubmissionService.java src/test/java/com/example/agent/workflow/RunRecordTest.java src/test/java/com/example/agent/app/RunSubmissionMemorySnapshotTest.java src/test/java/com/example/agent/runtime/AgentRuntimeTest.java src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java
-git commit -m "feat(记忆): 将上下文快照固定到 Run（任务4）"
-```
-
-- [ ] **步骤 5：提交任务 4**
-
-```bash
-git add src/main/java/com/example/agent/workflow/RunRecord.java src/main/java/com/example/agent/runtime/AgentRuntime.java src/main/java/com/example/agent/collaboration/CollaborativeWorkflow.java src/main/java/com/example/agent/app/RunSubmissionService.java src/test/java/com/example/agent/workflow/RunRecordTest.java src/test/java/com/example/agent/app/RunSubmissionServiceTest.java src/test/java/com/example/agent/runtime/AgentRuntimeTest.java src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java
-git commit -m "feat(记忆): 将检索快照固定到 Run（任务4）"
-```
+**提交：** 任务 4 与随后补充的任务 5 上下文边界测试已一并提交到 `932a2db`（`feat(记忆): 将上下文快照固定到 Run（任务4）`），该提交覆盖快照模型、入口固定、模型注入和 Worker 隔离。
 
 ## 任务 5：模型注入、Supervisor 边界和 Worker 数据最小化
 
@@ -283,7 +277,7 @@ git commit -m "feat(记忆): 将检索快照固定到 Run（任务4）"
 - 测试：`src/test/java/com/example/agent/runtime/AgentRuntimeTest.java`
 - 测试：`src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java`
 
-- [ ] **步骤 1：先写模型请求消息边界测试**
+- [x] **步骤 1：先写模型请求消息边界测试**
 
 ```java
 @Test
@@ -296,28 +290,30 @@ void supervisorGetsMemoryContextButDelegatedWorkerDoesNotGetWholeMemory() {
 }
 ```
 
-- [ ] **步骤 2：运行测试确认当前 prompt 尚不注入快照**
+- [x] **步骤 2：运行测试确认当前 prompt 尚不注入快照**
 
 运行：`mvn -Dtest=AgentRuntimeTest,CollaborativeWorkflowTest test`
 
 预期：新断言失败，表明 planner/single model request 缺少记忆上下文。
 
-- [ ] **步骤 3：在 Runtime 与 Supervisor 模型消息中渲染固定快照**
+- [x] **步骤 3：在 Runtime 与 Supervisor 模型消息中渲染固定快照**
 
 AgentRuntime 每轮 `modelMessages` 将 `MemoryPrompt.render(run.memoryContextSnapshot())` 合并进 system 内容；协作 Workflow 仅当 `workerId` 为 supervisor/planning/summary 角色时附加快照。Worker 内容仍只由已解析任务输入和依赖结果组成。提示明确记忆不可作为指令、当前请求优先、禁止模型写记忆。
 
-- [ ] **步骤 4：运行模型请求边界测试确认通过**
+- [x] **步骤 4：运行模型请求边界测试确认通过**
 
 运行：`mvn -Dtest=AgentRuntimeTest,CollaborativeWorkflowTest test`
 
 预期：单 Agent 和 Supervisor 得到同一固定内容；Worker 不收到完整快照；用户/模型/工具消息序列与原协议保持有效。
 
-- [ ] **步骤 5：提交任务 5**
+- [x] **步骤 5：提交任务 5**
 
 ```bash
 git add src/main/java/com/example/agent/runtime/AgentRuntime.java src/main/java/com/example/agent/collaboration/CollaborativeWorkflow.java src/test/java/com/example/agent/runtime/AgentRuntimeTest.java src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java
 git commit -m "feat(记忆): 将快照注入受控模型上下文（任务5）"
 ```
+
+该实现和验证与任务 4 同提交，见 `932a2db`。
 
 ## 任务 6：配置、CLI 命令、组合根与遥测
 
@@ -330,7 +326,7 @@ git commit -m "feat(记忆): 将快照注入受控模型上下文（任务5）"
 - 修改：`src/test/java/com/example/agent/MainTest.java`
 - 测试：`src/test/java/com/example/agent/AgentApplicationContextTest.java`
 
-- [ ] **步骤 1：先写 CLI 命令和属性约束测试**
+- [x] **步骤 1：先写 CLI 命令和属性约束测试**
 
 ```java
 @Test
@@ -343,28 +339,32 @@ void memoryCommandCreatesListsUpdatesAndDeletesWithoutCallingModel() {
 }
 ```
 
-- [ ] **步骤 2：运行 CLI 测试确认命令未支持**
+- [x] **步骤 2：运行 CLI 测试确认命令未支持**
 
 运行：`mvn -Dtest=MainTest,AgentApplicationContextTest test`
 
 预期：新命令断言失败或应用组合测试暴露缺失 Bean。
 
-- [ ] **步骤 3：实现命令解析、依赖装配和低基数指标**
+- [x] **步骤 3：实现命令解析、依赖装配和低基数指标**
 
 `AgentProperties` 配 namespace、最大条数、最大字符数，并校验 1..5 与 1..2000 上限。Main 在普通 Run 分支之前识别 `/memory`，以命令、key、kind 为前三段，将剩余原文作为正文，精确解析 `help/list/show/remember/update/delete`；错误输出不回显正文或异常。`AgentConfiguration` 装配 `PostgresMemoryStore`、retriever、service、provider，并注入 Runtime、协作、submission 和 CLI。Telemetry 仅记 operation、result、degraded 三个固定标签与耗时/数量，不记录 key/query/content/namespace。
 
-- [ ] **步骤 4：运行 CLI 与 Spring context 测试确认通过**
+- [x] **步骤 4：运行 CLI 与 Spring context 测试确认通过**
 
 运行：`mvn -Dtest=MainTest,AgentApplicationContextTest test`
 
 预期：显式命令完成 CRUD 且不调用模型；应用上下文启动并使用 Flyway/PostgreSQL Store；不合法参数不落库。
 
-- [ ] **步骤 5：提交任务 6**
+实际结果：命令 `DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn -Dtest=MainTest,AgentApplicationContextTest test` 通过，8 项测试，0 失败/错误/跳过；应用上下文由 Testcontainers PostgreSQL 执行至 Flyway V13，确认 PostgresMemoryStore 和 MemoryService 装配。
+
+- [x] **步骤 5：提交任务 6**
 
 ```bash
 git add src/main/java/com/example/agent/AgentProperties.java src/main/resources/application.yml src/main/java/com/example/agent/AgentConfiguration.java src/main/java/com/example/agent/Main.java src/main/java/com/example/agent/observability/AgentTelemetry.java src/test/java/com/example/agent/MainTest.java src/test/java/com/example/agent/AgentApplicationContextTest.java
 git commit -m "feat(记忆): 接入 CLI 配置与运行观测（任务6）"
 ```
+
+实际实现还包括 `CollaborativeWorkflowTest`、`MemoryServiceTest` 与 `PostgresRunStoreTest` 的协作/隐私/快照回归。
 
 ## 任务 7：数据盘点、README 和阶段七验收
 
@@ -374,7 +374,7 @@ git commit -m "feat(记忆): 接入 CLI 配置与运行观测（任务6）"
 - 创建：`docs/stages/phase-07-summary.html`（仅验收通过后）
 - 创建：`src/test/java/com/example/agent/memory/MemoryPrivacyContractTest.java`
 
-- [ ] **步骤 1：先写日志/遥测脱敏与完整生命周期回归测试**
+- [x] **步骤 1：添加日志/遥测脱敏与完整生命周期回归测试**
 
 ```java
 @Test
@@ -387,29 +387,31 @@ void telemetryAndAuditDoNotContainMemoryKeyQueryOrContent() {
 }
 ```
 
-- [ ] **步骤 2：运行隐私与回归测试确认失败点真实**
+- [x] **步骤 2：运行隐私与回归测试**
 
-运行：`mvn -Dtest=MemoryPrivacyContractTest test`
+运行：`mvn -Dtest=MemoryPrivacyContractTest,MemoryServiceTest,CollaborativeWorkflowTest,PostgresRunStoreTest test`
 
-预期：新测试因尚未有测试夹具或对应指标/审计契约而失败；如测试本身不成立，先修正测试。
+实际结果：55 项测试全部通过，0 失败/错误/跳过；随后执行的完整 `mvn clean verify` 共 281 项测试全部通过。
 
-- [ ] **步骤 3：完善集成回归及文档**
+- [x] **步骤 3：完善集成回归及文档**
 
 README 增加 `/memory` 使用示例、`AGENT_MEMORY_NAMESPACE` 默认值、删除/Run 快照语义、Fake/确定性/PostgreSQL 验收命令和评测限制；data inventory 标明 memory 表与 Run checkpoint 存储正文、普通日志和指标不含正文、历史快照按 Run retention 保留。所有完整阶段测试通过后生成中文 HTML 阶段总结，含阶段实际范围、遗留问题影响、实现与替代方案、真实命令/数量/结果、限制及阶段完成时分层架构图；README 更新正式 HTML 链接。
 
-- [ ] **步骤 4：运行阶段验收命令**
+- [x] **步骤 4：运行阶段验收命令**
 
 运行：`mvn clean verify`
 
 预期：全套单元、Testcontainers PostgreSQL/OTel 集成和构建均通过，无失败、错误或意外跳过；记录实际测试数和 Docker 环境。
 
-- [ ] **步骤 5：差异和 HTML 结构复核**
+实际命令：`DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn clean verify`。实际结果：281 项测试，0 失败、0 错误、0 跳过，`BUILD SUCCESS`；PostgreSQL 16 与 OTel Collector Testcontainers 集成测试均执行。
+
+- [x] **步骤 5：差异和 HTML 结构复核**
 
 运行：`git diff --check`；使用 JDK/Python 标准 XML/HTML parser 解析 `docs/stages/phase-07-summary.html`；确认 README 索引链接存在，架构图描述阶段七真实交付而非目标架构。
 
 预期：无空白错误、HTML 可解析、索引有效、阶段总结证据与命令输出一致。
 
-- [ ] **步骤 6：提交验收文档**
+- [x] **步骤 6：提交验收文档**
 
 ```bash
 git add README.md docs/security/data-inventory.md docs/stages/phase-07-summary.html src/test/java/com/example/agent/memory/MemoryPrivacyContractTest.java
