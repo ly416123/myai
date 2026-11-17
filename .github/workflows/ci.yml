@@ -156,7 +156,7 @@ jobs:
           docker push "$PROXY_IMAGE:$IMAGE_TAG"
           {
             echo "### Published images"
-            echo "- Runtime: `$RUNTIME_IMAGE:$IMAGE_TAG`"
-            echo "- Proxy: `$PROXY_IMAGE:$IMAGE_TAG`"
-            echo "- Source commit: `$GITHUB_SHA`"
+            echo "- Runtime: $RUNTIME_IMAGE:$IMAGE_TAG"
+            echo "- Proxy: $PROXY_IMAGE:$IMAGE_TAG"
+            echo "- Source commit: $GITHUB_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
