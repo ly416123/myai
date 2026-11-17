@@ -149,7 +149,7 @@ void updateIsVersionCheckedAndAuditNeverStoresMemoryText() {
 
 迁移创建 `agent_memory`：UUID 主键、namespace、key、kind、正文、version、status、时间；活动条目用部分唯一索引 `(namespace, memory_key) WHERE status='ACTIVE'`，检索索引 `(namespace, status)`。`agent_memory_event` 不设正文或 key 字段，按 append-only 设计记录 UUID、memory UUID、operation、version、occurred_at、固定来源。更新用版本条件更新；删除在同一事务内写事件并将状态设为 `DELETED`、清空 key/正文，允许之后用同一 key 新建。Store 不记录异常原文；MemoryService 将存储错误映射为脱敏的领域错误，保留唯一键冲突供显式冲突提示。
 
-Store 接口提供 `create`、`update(expectedVersion)`、`delete(expectedVersion)`、`findByKey`、`listActive(limit)`、`countActive`、`events(memoryId)`。InMemory Fake 使用锁实现同样唯一性、tombstone 和版本条件。
+Store 接口提供 `create(namespaceLimit)`、`update(expectedVersion)`、`delete(expectedVersion)`、`findByKey`、`listActive(limit)`、`countActive`、`events(memoryId)`。PostgreSQL 新增在同一事务内获取 namespace 级 advisory lock 后计数并插入，确保多实例下 500 条上限不被并发绕过；InMemory Fake 使用锁实现同样唯一性、上限、tombstone 和版本条件。
 
 - [x] **步骤 4：运行 PostgreSQL 测试确认通过**
 
@@ -172,7 +172,7 @@ git commit -m "feat(记忆): 添加 PostgreSQL 存储和迁移（任务2）"
 - 创建：`src/main/java/com/example/agent/memory/MemoryContextProvider.java`
 - 创建：`src/main/java/com/example/agent/memory/MemoryPrompt.java`
 
-- [ ] **步骤 1：先写显式 CRUD、限制与降级测试**
+- [x] **步骤 1：先写显式 CRUD、限制与降级测试**
 
 ```java
 @Test
@@ -189,23 +189,23 @@ void createDoesNotOverwriteAndRetrievalFailureReturnsDegradedEmptySnapshot() {
 }
 ```
 
-- [ ] **步骤 2：运行测试确认服务行为尚不存在**
+- [x] **步骤 2：运行测试确认服务行为尚不存在**
 
 运行：`mvn -Dtest=MemoryServiceTest test`
 
 预期：测试编译失败，缺少服务与异常类型。
 
-- [ ] **步骤 3：实现规则与安全错误映射**
+- [x] **步骤 3：实现规则与安全错误映射**
 
-`MemoryService` 验证 key、kind、正文非空、字符长度不超过 2,000；新增前检查 namespace 活动条目最多 500，随后仍由唯一约束处理竞态；更新/删除都先读取当前 version 并 CAS。CRUD 存储异常转换为无原文的 `MemoryOperationException`。`snapshot(query)` 捕获读取失败后返回 `degraded=true` 空快照；检索候选数上限为 500。`MemoryContextProvider` 只暴露 `snapshot(query)`，`MemoryPrompt.render(snapshot)` 产出唯一可测的 system 内容并按预算计数。
+`MemoryService` 验证 key、kind、正文非空、字符长度不超过 2,000，并拒绝常见密钥格式；活动条目上限由 Store 的事务性 `create(namespaceLimit)` 原子执行。更新/删除都先读取当前 version 并 CAS。CRUD 存储异常转换为无原文的 `MemoryOperationException`。`snapshot(query)` 捕获读取失败后返回 `degraded=true` 空快照；检索候选数上限为 500。`MemoryContextProvider` 只暴露 `snapshot(query)`，`MemoryPrompt.render(snapshot)` 产出唯一可测的 system 内容并按预算计数。
 
-- [ ] **步骤 4：运行服务测试确认通过**
+- [x] **步骤 4：运行服务测试确认通过**
 
-运行：`mvn -Dtest=MemoryServiceTest test`
+运行：`mvn -Dtest=MemoryServiceTest test`，并结合 `mvn -Dtest=MemoryServiceTest,PostgresMemoryStoreTest test` 验证 namespace 并发上限。
 
 预期：显式新增/更新/删除、无覆盖、500 条上限、2,000 字符校验、读取降级和管理写入 fail-closed 测试通过。
 
-- [ ] **步骤 5：提交任务 3**
+- [x] **步骤 5：提交任务 3**
 
 ```bash
 git add src/main/java/com/example/agent/memory src/test/java/com/example/agent/memory/MemoryServiceTest.java

@@ -21,11 +21,13 @@ public final class InMemoryMemoryStore implements MemoryStore {
     private volatile boolean failReads;
 
     @Override
-    public MemoryEntry create(String namespace, String key, MemoryKind kind, String content) {
+    public MemoryEntry create(String namespace, String key, MemoryKind kind, String content, int namespaceLimit) {
         lock.writeLock().lock();
         try {
             ensureReadable();
             if (activeByKey(namespace, key).isPresent()) throw new DuplicateKeyException("Memory key already exists");
+            if (namespaceLimit < 1 || namespaceLimit > 500) throw new IllegalArgumentException("Invalid memory limit");
+            if (countActive(namespace) >= namespaceLimit) throw new MemoryLimitExceededException();
             Instant now = Instant.now();
             MemoryEntry entry = new MemoryEntry(UUID.randomUUID(), namespace, key, kind, content, 1, now, now);
             entries.put(entry.memoryId(), new StoredMemory(entry, true));
@@ -135,7 +137,7 @@ public final class InMemoryMemoryStore implements MemoryStore {
     }
 
     private void ensureReadable() {
-        if (failReads) throw new IllegalStateException("Memory store unavailable");
+        if (failReads) throw new MemoryStoreUnavailableException();
     }
 
     private record StoredMemory(MemoryEntry entry, boolean active) { }

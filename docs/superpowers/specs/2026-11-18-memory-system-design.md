@@ -94,7 +94,7 @@ flowchart TB
 - Run 检查点 JSON 新增可空 `memoryContextSnapshot`。旧检查点反序列化为“无记忆快照”，不回查当前记忆，防止旧 Run 恢复时意外注入新资料。
 - 同步创建与队列创建共享同一应用服务，避免两个入口检索语义不一致；Run 首次保存前固定快照，提交失败不留下半成品 Run。
 - Worker 执行与恢复只读 Run 上保存的快照，不依赖 Worker 本地配置或记忆库检索时机。
-- PostgreSQL 事务同时提交条目变更与元数据审计事件。内存 Fake Store 用于服务逻辑测试；生产组合沿用 PostgreSQL 与 Flyway。
+- PostgreSQL 事务同时提交条目变更与元数据审计事件。新增操作通过 namespace 事务级 advisory lock 串行校验活动条目上限，避免多实例并发越限。内存 Fake Store 用于服务逻辑测试；生产组合沿用 PostgreSQL 与 Flyway。
 
 ## 7. 可观测与敏感信息边界
 

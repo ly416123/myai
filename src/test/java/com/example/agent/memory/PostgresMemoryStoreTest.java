@@ -6,8 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.flywaydb.core.Flyway;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -135,7 +135,7 @@ class PostgresMemoryStoreTest {
                 """);
 
         try {
-            assertThrows(DataAccessException.class, () -> store.update("default", created.memoryId(),
+            assertThrows(MemoryStoreUnavailableException.class, () -> store.update("default", created.memoryId(),
                     created.version(), MemoryKind.PREFERENCE, "更新值"));
         } finally {
             jdbc.execute("DROP TRIGGER reject_memory_update_event_trigger ON agent_memory_event");
@@ -144,5 +144,27 @@ class PostgresMemoryStoreTest {
 
         assertEquals("中文", store.findByKey("default", "answer.language").orElseThrow().content());
         assertEquals(1, store.events(created.memoryId()).size());
+    }
+
+    @Test
+    void namespaceLimitIsAtomicAcrossConcurrentCreates() throws Exception {
+        var start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> createWithinLimit(start, "first.key"));
+            var second = pool.submit(() -> createWithinLimit(start, "second.key"));
+            start.countDown();
+            assertTrue(first.get(5, TimeUnit.SECONDS) ^ second.get(5, TimeUnit.SECONDS));
+        }
+        assertEquals(1, store.countActive("limited"));
+    }
+
+    private static boolean createWithinLimit(CountDownLatch start, String key) throws Exception {
+        start.await();
+        try {
+            store.create("limited", key, MemoryKind.FACT, "value", 1);
+            return true;
+        } catch (MemoryLimitExceededException rejected) {
+            return false;
+        }
     }
 }
