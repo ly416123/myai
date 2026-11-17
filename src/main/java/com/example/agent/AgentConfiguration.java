@@ -162,12 +162,49 @@ public class AgentConfiguration {
     WorkerRegistry workerRegistry() {
         var registry = new WorkerRegistry();
         registry.register(new WorkerSpec("calculator", "本地四则运算", "你负责执行用户拆分给你的计算任务。只报告计算结果和必要步骤。",
-                java.util.List.of("calculator"), 4, 8));
+                java.util.List.of("calculator"), 4, 8, "v1", "本地加减乘除计算",
+                contractSchema("""
+                        {"type":"object","properties":{"expression":{"type":"string","description":"待计算的数学表达式"}},
+                         "required":["expression"],"additionalProperties":false}
+                        """), "待计算的数学表达式", "操作符、操作数与计算结果",
+                contractSchema("""
+                        {"type":"object","properties":{"operation":{"type":"string"},"a":{"type":"number"},
+                         "b":{"type":"number"},"result":{"type":"number"}},
+                         "required":["operation","a","b","result"],"additionalProperties":false}
+                        """)));
         registry.register(new WorkerSpec("clock", "指定时区的当前时间", "你负责查询用户指定时区的当前时间。只根据工具结果回答。",
-                java.util.List.of("current_time"), 3, 4));
+                java.util.List.of("current_time"), 3, 4, "v1", "查询指定 IANA 时区的当前时间",
+                contractSchema("""
+                        {"type":"object","properties":{"timezone":{"type":"string","description":"IANA 时区名称"}},
+                         "required":["timezone"],"additionalProperties":false}
+                        """), "IANA 时区名称，例如 Asia/Shanghai", "时区和 ISO-8601 当前时间",
+                contractSchema("""
+                        {"type":"object","properties":{"timezone":{"type":"string"},"dateTime":{"type":"string"},
+                         "source":{"type":"string"},"simulated":{"type":"boolean"}},
+                         "required":["timezone","dateTime","source","simulated"],"additionalProperties":false}
+                        """)));
         registry.register(new WorkerSpec("weather", "模拟天气查询", "你负责查询指定城市的模拟天气。明确说明天气数据是模拟值。",
-                java.util.List.of("weather"), 3, 4));
+                java.util.List.of("weather"), 3, 4, "v1", "查询城市的模拟天气",
+                contractSchema("""
+                        {"type":"object","properties":{"city":{"type":"string","description":"要查询天气的城市名称"}},
+                         "required":["city"],"additionalProperties":false}
+                        """), "城市名称", "城市、天气状况、温度、湿度、模拟标记和数据来源",
+                contractSchema("""
+                        {"type":"object","properties":{"city":{"type":"string"},"condition":{"type":"string"},
+                         "temperatureCelsius":{"type":"number"},"humidityPercent":{"type":"number"},
+                         "source":{"type":"string"},"simulated":{"type":"boolean"}},
+                         "required":["city","condition","temperatureCelsius","humidityPercent","source","simulated"],
+                         "additionalProperties":false}
+                        """)));
         return registry;
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode contractSchema(String schema) {
+        try {
+            return new ObjectMapper().readTree(schema);
+        } catch (IOException invalidConfiguration) {
+            throw new IllegalStateException("Invalid static Worker contract Schema");
+        }
     }
 
     @Bean

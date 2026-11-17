@@ -23,12 +23,14 @@ import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.StepKind;
 import com.example.agent.observability.AgentTelemetry;
 import io.micrometer.observation.Observation;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -72,6 +74,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     private final CollaborationConfig config;
     private final ObjectMapper json;
     private final TaskPlanValidator planValidator;
+    private final WorkerContractValidator contractValidator;
     private final AgentTelemetry telemetry;
     private final RunLeasePolicy leasePolicy;
     private final ConcurrentHashMap<String, Control> controls = new ConcurrentHashMap<>();
@@ -103,6 +106,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         this.telemetry = java.util.Objects.requireNonNull(telemetry);
         this.leasePolicy = java.util.Objects.requireNonNull(leasePolicy);
         this.planValidator = new TaskPlanValidator(workers, config.maxTasks());
+        this.contractValidator = new WorkerContractValidator(json);
         validateWorkerToolAllowLists();
     }
 
@@ -208,7 +212,12 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             log.info("runId={} workflow=SUPERVISOR status=RUNNING resumed={}", run.runId(), recovering);
             if (recovering) recoverInterruptedWork(run);
 
-            if (run.taskPlan() == null) createAndSavePlan(run, control, budget);
+            if (run.taskPlan() == null) {
+                createAndSavePlan(run, control, budget);
+            } else if (run.taskPlan().route() == TaskPlan.Route.DELEGATE && run.childTasks().isEmpty()) {
+                // 规划结果已落盘、子任务投影尚未落盘时恢复，重新验证后再安全补齐 PENDING 记录。
+                validatePersistedPlan(run);
+            }
             if (run.taskPlan().route() == TaskPlan.Route.NO_SPLIT) {
                 executeSingleAgentFallback(run, control, budget);
                 return complete(run, control, RunStatus.SUCCEEDED, null);
@@ -219,7 +228,12 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             checkDeadline(run);
             List<ChildTaskRecord> successful = run.childTasks().stream()
                     .filter(task -> task.status() == TaskStatus.SUCCEEDED).toList();
-            if (successful.isEmpty()) throw new WorkflowAbort(FailureCategory.NO_SUCCESSFUL_TASKS);
+            if (successful.isEmpty()) {
+                FailureCategory reason = run.childTasks().stream().map(ChildTaskRecord::failureCategory)
+                        .filter(category -> category == FailureCategory.WORKER_CONTRACT_MISMATCH)
+                        .findFirst().orElse(FailureCategory.NO_SUCCESSFUL_TASKS);
+                throw new WorkflowAbort(reason);
+            }
 
             Set<String> covered = new HashSet<>();
             successful.forEach(task -> covered.addAll(task.deliverableIds()));
@@ -260,11 +274,14 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         Instant start = Instant.now();
         String planStepId = UUID.randomUUID().toString();
         run.addStep(RunStep.workflow(planStepId, StepKind.PLAN, null, "supervisor", "PLAN", start));
+        List<Message> plannerMessages = List.of(Message.system(SUPERVISOR_PROMPT),
+                Message.user(supervisorRequest() + "\n\nUser request:\n" + run.userInput()));
+        run.setPlanningInputUtf8Bytes(plannerMessages.stream().map(Message::content)
+                .mapToLong(content -> content.getBytes(StandardCharsets.UTF_8).length).sum());
         persist(run);
         ModelResponse response;
         try {
-            response = invokeModel(run, List.of(Message.system(SUPERVISOR_PROMPT),
-                    Message.user(supervisorRequest() + "\n\nUser request:\n" + run.userInput())),
+            response = invokeModel(run, plannerMessages,
                     List.of(), "supervisor", null, Integer.MAX_VALUE, budget, control);
         } catch (WorkflowAbort abort) {
             finishWorkflowStep(run, planStepId, RunStepStatus.FAILED, abort.category);
@@ -278,11 +295,20 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             plan = json.readValue(response.content(), TaskPlan.class);
             planValidator.validate(plan);
         } catch (Exception invalid) {
-            finishWorkflowStep(run, planStepId, RunStepStatus.FAILED, FailureCategory.PLAN_INVALID);
-            throw new WorkflowAbort(FailureCategory.PLAN_INVALID);
+            FailureCategory category = FailureCategory.PLAN_INVALID;
+            if (invalid instanceof WorkerContractException contractFailure) {
+                run.setWorkerContractIssues(contractFailure.issues());
+                category = FailureCategory.WORKER_CONTRACT_VIOLATION;
+            }
+            finishWorkflowStep(run, planStepId, RunStepStatus.FAILED, category);
+            throw new WorkflowAbort(category);
         }
         run.replaceStep(planStepId, run.step(planStepId).finish(RunStepStatus.SUCCEEDED, Instant.now(), null,
                 null, null));
+        if (plan.route() == TaskPlan.Route.DELEGATE) {
+            plan = new TaskPlan(plan.route(), plan.tasks().stream().map(task -> task.withWorkerVersion(
+                    workers.find(task.workerId()).orElseThrow().version())).toList(), plan.deliverables());
+        }
         run.setTaskPlan(plan);
         if (plan.route() == TaskPlan.Route.DELEGATE) {
             Map<String, String> traceContext = telemetry.captureCurrentTraceContext();
@@ -291,13 +317,85 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         persist(run);
     }
 
+    /** 检查点恢复也重新执行静态契约校验，避免跳过规划阶段的验证边界。 */
+    private void validatePersistedPlan(RunRecord run) throws WorkflowAbort {
+        try {
+            try {
+                planValidator.validate(run.taskPlan());
+            } catch (WorkerContractException invalidContract) {
+                run.setWorkerContractIssues(invalidContract.issues());
+                throw new WorkflowAbort(FailureCategory.WORKER_CONTRACT_VIOLATION);
+            }
+            if (run.taskPlan().route() != TaskPlan.Route.DELEGATE) return;
+            Map<String, ChildTaskRecord> existing = new HashMap<>();
+            run.childTasks().forEach(task -> existing.put(task.taskId(), task));
+            if (!existing.isEmpty()) return;
+            List<String> plannedIds = run.taskPlan().tasks().stream().map(PlannedTask::taskId).toList();
+            if (!existing.keySet().stream().allMatch(plannedIds::contains)) throw new IllegalArgumentException();
+            Map<String, String> traceContext = telemetry.captureCurrentTraceContext();
+            for (PlannedTask planned : run.taskPlan().tasks()) {
+                WorkerSpec worker = workers.find(planned.workerId()).orElseThrow(IllegalArgumentException::new);
+                if (!java.util.Objects.equals(planned.workerVersion(), worker.version())) {
+                    throw new WorkerContractException(List.of(new WorkerContractIssue("*", "WORKER",
+                            "WORKER_VERSION_MISMATCH")));
+                }
+                ChildTaskRecord record = existing.get(planned.taskId());
+                if (record == null) {
+                    run.addChildTask(ChildTaskRecord.pending(planned, traceContext));
+                } else if (!java.util.Objects.equals(record.workerVersion(), worker.version())) {
+                    throw new WorkerContractException(List.of(new WorkerContractIssue("*", "WORKER",
+                            "WORKER_VERSION_MISMATCH")));
+                }
+            }
+            persist(run);
+        } catch (WorkflowAbort abort) {
+            throw abort;
+        } catch (WorkerContractException mismatch) {
+            run.setWorkerContractIssues(mismatch.issues());
+            throw new WorkflowAbort(FailureCategory.WORKER_CONTRACT_MISMATCH);
+        } catch (RuntimeException invalidPlan) {
+            List<WorkerContractIssue> issues = invalidPlan instanceof WorkerContractException contract
+                    ? contract.issues()
+                    : List.of(new WorkerContractIssue("*", "CHECKPOINT", "PERSISTED_PLAN_INVALID"));
+            run.setWorkerContractIssues(issues);
+            throw new WorkflowAbort(FailureCategory.WORKER_CONTRACT_VIOLATION);
+        }
+    }
+
     private String supervisorRequest() {
-        String roster = workers.all().stream().map(worker -> "- " + worker.workerId() + ": "
-                + worker.responsibility() + "; tools=" + worker.allowedTools())
-                .reduce((a, b) -> a + "\n" + b).orElse("(no workers registered)");
+        String roster = workers.all().stream().map(worker -> {
+            if (worker.version() == null) return "- " + worker.workerId() + ": "
+                    + worker.responsibility() + "; tools=" + worker.allowedTools();
+            JsonNode inputSchema = worker.inputSchema();
+            JsonNode properties = inputSchema.path("properties");
+            List<String> fields = schemaFieldSummary(inputSchema);
+            List<String> outputs = schemaFieldSummary(worker.outputSchema());
+            return "- " + worker.workerId() + ": " + worker.planningSummary() + "; inputs=" + fields
+                    + "; inputSummary=" + worker.inputSummary() + "; output=" + worker.outputSummary()
+                    + "; outputFields=" + outputs
+                    + "; tools=" + worker.allowedTools();
+        }).reduce((a, b) -> a + "\n" + b).orElse("(no workers registered)");
         return "Registered workers (only these may be selected):\n" + roster
                 + "\nMaximum tasks: " + config.maxTasks()
-                + "\nFor every expected output, add a deliverable and map it to at least one task.";
+                + "\nFor every expected output, add a deliverable and map it to at least one task."
+                + "\nEach task must include acceptanceCriteria and inputBindings. For parent values use "
+                + "{\"field\":\"...\",\"source\":\"PARENT_REQUEST\",\"parentValue\":...}. "
+                + "For dependency fields use {\"field\":\"...\",\"source\":\"DEPENDENCY_OUTPUT\","
+                + "\"dependencyTaskId\":\"direct-task-id\",\"jsonPointer\":\"/field\"}. "
+                + "Use only declared input fields; bind every required field. Do not include workerVersion.";
+    }
+
+    private static List<String> schemaFieldSummary(JsonNode schema) {
+        JsonNode properties = schema.path("properties");
+        Set<String> required = new HashSet<>();
+        schema.path("required").forEach(node -> required.add(node.asText()));
+        List<String> fields = new ArrayList<>();
+        if (properties.isObject()) properties.fields().forEachRemaining(entry -> fields.add(entry.getKey()
+                + ":" + entry.getValue().path("type").asText("any")
+                + (required.contains(entry.getKey()) ? " (required)" : "")
+                + (entry.getValue().hasNonNull("description")
+                ? " — " + entry.getValue().path("description").asText() : "")));
+        return fields;
     }
 
     private void executeSingleAgentFallback(RunRecord run, Control control, SharedRunBudget budget)
@@ -443,15 +541,49 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     private void executeClaimedChildTask(RunRecord run, String taskId, PlannedTask plan,
                                          Control control, SharedRunBudget budget) {
         ChildTaskRecord task = childTask(run, taskId);
-        WorkerSpec worker = workers.find(plan.workerId()).orElseThrow();
-        List<Message> messages = task.messages();
-        if (task.status() == TaskStatus.PENDING || messages.isEmpty()) {
-            messages = workerMessages(run, plan, worker);
-            task = task.start(messages, Instant.now());
-            run.replaceChildTask(taskId, task);
-            run.addStep(RunStep.workflow(UUID.randomUUID().toString(), StepKind.WORKER,
-                    taskId, worker.workerId(), "WORKER", task.startedAt()));
+        WorkerSpec worker = workers.find(plan.workerId()).orElse(null);
+        if (worker == null || !java.util.Objects.equals(task.workerVersion(), worker.version())
+                || !java.util.Objects.equals(plan.workerVersion(), worker.version())) {
+            ChildTaskRecord failed = task.finish(TaskStatus.FAILED, null,
+                    FailureCategory.WORKER_CONTRACT_MISMATCH, Instant.now());
+            run.replaceChildTask(taskId, failed);
+            run.steps().stream().filter(step -> step.kind() == StepKind.WORKER && taskId.equals(step.taskId())
+                            && step.status() == RunStepStatus.IN_PROGRESS)
+                    .forEach(step -> run.replaceStep(step.stepId(), step.finish(RunStepStatus.FAILED,
+                            Instant.now(), FailureCategory.WORKER_CONTRACT_MISMATCH, null, null)));
             persist(run);
+            log.warn("runId={} taskId={} workerContract=version_mismatch", run.runId(), taskId);
+            return;
+        }
+        List<Message> messages = task.messages();
+        JsonNode resolvedInput = task.resolvedInput();
+        try {
+            if (worker.version() != null && resolvedInput == null) {
+                Map<String, ChildTaskRecord> dependencies = new HashMap<>();
+                for (String dependencyId : task.dependencies()) dependencies.put(dependencyId, childTask(run, dependencyId));
+                resolvedInput = contractValidator.resolveInput(worker, plan, run.userInput(), dependencies);
+            }
+            if (worker.version() != null && resolvedInput == null)
+                throw new IllegalArgumentException("Persisted Worker input is unavailable");
+            if (task.status() == TaskStatus.PENDING || messages.isEmpty()) {
+                messages = workerMessages(run, plan, worker, resolvedInput);
+                task = task.start(messages, Instant.now());
+                if (resolvedInput != null) task = task.withResolvedInput(resolvedInput);
+                run.replaceChildTask(taskId, task);
+                run.addStep(RunStep.workflow(UUID.randomUUID().toString(), StepKind.WORKER,
+                        taskId, worker.workerId(), "WORKER", task.startedAt()));
+                persist(run);
+            }
+        } catch (RuntimeException invalidInput) {
+            if (worker.version() == null) throw invalidInput;
+            if (invalidInput instanceof WorkerContractException contractFailure) {
+                run.addWorkerContractIssues(contractFailure.issues());
+            } else {
+                run.addWorkerContractIssues(List.of(new WorkerContractIssue("*", "BINDINGS",
+                        "INPUT_RESOLUTION_FAILED")));
+            }
+            failWorkerContract(run, taskId, worker.workerId(), FailureCategory.WORKER_CONTRACT_VIOLATION);
+            return;
         }
         String workerStepId = run.steps().stream().filter(step -> step.kind() == StepKind.WORKER
                         && taskId.equals(step.taskId()) && step.status() == RunStepStatus.IN_PROGRESS)
@@ -471,6 +603,26 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             String result = runAgentLoop(run, taskId, worker.workerId(), messages, restricted, executor,
                     worker.maxModelCalls(), worker.maxToolCalls(), control, budget);
             if (result == null || result.isBlank()) throw new ModelClientException(FailureCategory.WORKER_FAILED, false);
+            if (worker.version() != null) {
+                JsonNode output;
+                try {
+                    output = json.readTree(result);
+                } catch (Exception invalidJson) {
+                    run.addWorkerContractIssue(new WorkerContractIssue("*", "WORKER_OUTPUT",
+                            "OUTPUT_INVALID_JSON"));
+                    throw new ModelClientException(FailureCategory.WORKER_CONTRACT_VIOLATION, false);
+                }
+                if (!contractValidator.isValidOutput(worker.outputSchema(), output)) {
+                    run.addWorkerContractIssue(new WorkerContractIssue("*", "WORKER_OUTPUT",
+                            "OUTPUT_SCHEMA_MISMATCH"));
+                    throw new ModelClientException(FailureCategory.WORKER_CONTRACT_VIOLATION, false);
+                }
+                try {
+                    result = json.writeValueAsString(output);
+                } catch (Exception impossible) {
+                    throw new ModelClientException(FailureCategory.WORKER_CONTRACT_VIOLATION, false);
+                }
+            }
             Instant now = Instant.now();
             ChildTaskRecord current = childTask(run, taskId).finish(TaskStatus.SUCCEEDED, result, null, now);
             run.replaceChildTask(taskId, current);
@@ -512,6 +664,23 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         } finally {
             telemetry.finishStep(workerObservation, run.step(workerStepId), "collaborative");
         }
+    }
+
+    private void failWorkerContract(RunRecord run, String taskId, String workerId, FailureCategory category) {
+        ChildTaskRecord current = childTask(run, taskId).finish(TaskStatus.FAILED, null, category, Instant.now());
+        run.replaceChildTask(taskId, current);
+        List<RunStep> active = run.steps().stream().filter(step -> step.kind() == StepKind.WORKER
+                && taskId.equals(step.taskId()) && step.status() == RunStepStatus.IN_PROGRESS).toList();
+        if (active.isEmpty()) {
+            run.addStep(RunStep.workflow(UUID.randomUUID().toString(), StepKind.WORKER, taskId,
+                    workerId, "WORKER_CONTRACT", Instant.now()).finish(RunStepStatus.FAILED, Instant.now(),
+                    category, null, null));
+        } else {
+            active.forEach(step -> run.replaceStep(step.stepId(), step.finish(RunStepStatus.FAILED,
+                    Instant.now(), category, null, null)));
+        }
+        persist(run);
+        log.warn("runId={} taskId={} workerContract=invalid_input", run.runId(), taskId);
     }
 
     private String runAgentLoop(RunRecord run, String taskId, String workerId, List<Message> initialMessages,
@@ -732,7 +901,18 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         return summary + "\n\nMissing deliverables: " + String.join(", ", missing);
     }
 
-    private List<Message> workerMessages(RunRecord run, PlannedTask task, WorkerSpec worker) {
+    private List<Message> workerMessages(RunRecord run, PlannedTask task, WorkerSpec worker, JsonNode resolvedInput) {
+        if (worker.version() != null) {
+            try {
+                String context = json.writeValueAsString(Map.of("task", task.description(),
+                        "acceptanceCriteria", task.acceptanceCriteria(), "input", resolvedInput));
+                String contractPrompt = worker.systemPrompt() + "\nWorker output contract: return exactly one JSON object matching this schema: "
+                        + worker.outputSchema();
+                return new ArrayList<>(List.of(Message.system(contractPrompt), Message.user(context)));
+            } catch (Exception impossible) {
+                throw new IllegalStateException("Unable to encode worker contract context");
+            }
+        }
         List<Map<String, String>> dependencies = new ArrayList<>();
         for (String dependencyId : task.dependencies()) {
             ChildTaskRecord dependency = childTask(run, dependencyId);

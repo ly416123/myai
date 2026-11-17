@@ -48,6 +48,180 @@ class CollaborativeWorkflowTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test
+    void versionedWorkerReceivesOnlyBoundInputAndStoresValidatedStructuredOutput() throws Exception {
+        ToolRegistry tools = tools();
+        WorkerRegistry workers = contractWorkers();
+        AtomicReference<String> plannerContext = new AtomicReference<>();
+        AtomicReference<List<com.example.agent.model.Message>> workerContext = new AtomicReference<>();
+        AtomicInteger plannerContentBytes = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) {
+                plannerContext.set(messages.getLast().content());
+                plannerContentBytes.set(messages.stream().map(com.example.agent.model.Message::content)
+                        .mapToInt(content -> content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).sum());
+                return plan("""
+                        {"route":"DELEGATE","tasks":[{"taskId":"forecast","workerId":"weather",
+                         "description":"Look up forecast","dependencies":[],"deliverableIds":["weather"],
+                         "inputBindings":[{"field":"city","source":"PARENT_REQUEST","parentValue":"Beijing"}],
+                         "acceptanceCriteria":["Return city and simulated forecast fields"]}],
+                         "deliverables":[{"deliverableId":"weather","description":"forecast"}]}
+                        """);
+            }
+            if (messages.getFirst().content().contains("Worker output contract")) {
+                workerContext.set(List.copyOf(messages));
+                return new ModelResponse("{\"city\":\"Beijing\",\"forecast\":\"sunny\"}", List.of());
+            }
+            return new ModelResponse("The simulated forecast for Beijing is sunny.", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            RunRecord run = workflow(model, tools, workers, executor, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)))
+                    .runTracked("Check Beijing weather; internal-context=do-not-forward");
+
+            assertEquals(RunStatus.SUCCEEDED, run.status());
+            assertEquals("v1", task(run, "forecast").workerVersion());
+            assertEquals("Beijing", task(run, "forecast").resolvedInput().path("city").asText());
+            assertEquals("{\"city\":\"Beijing\",\"forecast\":\"sunny\"}", task(run, "forecast").result());
+            assertEquals(plannerContentBytes.get(), run.planningInputUtf8Bytes());
+            assertTrue(plannerContext.get().contains("weather"));
+            assertTrue(plannerContext.get().contains("outputFields=[city:string"));
+            assertFalse(plannerContext.get().contains("private weather system prompt"));
+            assertFalse(plannerContext.get().contains("outputSchema"));
+            assertFalse(plannerContext.get().contains("additionalProperties"));
+            assertTrue(workerContext.get().getLast().content().contains("Beijing"));
+            assertFalse(workerContext.get().getLast().content().contains("internal-context"));
+            assertTrue(workerContext.get().getFirst().content().contains("Worker output contract"));
+        }
+    }
+
+    @Test
+    void versionedWorkerInvalidOutputIsAControlledContractFailure() throws Exception {
+        ToolRegistry tools = tools();
+        WorkerRegistry workers = contractWorkers();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) return plan("""
+                    {"route":"DELEGATE","tasks":[{"taskId":"forecast","workerId":"weather",
+                     "description":"Look up forecast","dependencies":[],"deliverableIds":["weather"],
+                     "inputBindings":[{"field":"city","source":"PARENT_REQUEST","parentValue":"Beijing"}],
+                     "acceptanceCriteria":["Return forecast"]}],
+                     "deliverables":[{"deliverableId":"weather","description":"forecast"}]}
+                    """);
+            if (messages.getFirst().content().contains("Worker output contract"))
+                return new ModelResponse("plain text is not a contract object", List.of());
+            return new ModelResponse("should not summarize invalid output", List.of());
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            RunRecord run = workflow(model, tools, workers, executor, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)))
+                    .runTracked("Check Beijing weather");
+            assertEquals(RunStatus.FAILED, run.status());
+            assertEquals(TaskStatus.FAILED, task(run, "forecast").status());
+            assertEquals(FailureCategory.WORKER_CONTRACT_VIOLATION, task(run, "forecast").failureCategory());
+            assertEquals("OUTPUT_INVALID_JSON", run.workerContractIssues().getFirst().reasonCode());
+        }
+    }
+
+    @Test
+    void missingRequiredWorkerInputIsReportedBeforeDispatch() throws Exception {
+        ToolRegistry tools = new ToolRegistry();
+        AtomicInteger toolCalls = new AtomicInteger();
+        tools.register(new TestTool("weather", toolCalls));
+        WorkerRegistry workers = contractWorkers();
+        AtomicInteger modelCalls = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            modelCalls.incrementAndGet();
+            if (isPlannerRequest(messages)) return plan("""
+                    {"route":"DELEGATE","tasks":[{"taskId":"forecast","workerId":"weather",
+                     "description":"Look up forecast","dependencies":[],"deliverableIds":["weather"],
+                     "inputBindings":[],"acceptanceCriteria":["Return forecast"]}],
+                     "deliverables":[{"deliverableId":"weather","description":"forecast"}]}
+                    """);
+            throw new AssertionError("Worker must not be dispatched without required city");
+        };
+        InMemoryRunStore store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            RunRecord run = workflow(model, tools, workers, executor, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)))
+                    .runTracked("Check a forecast");
+            assertEquals(RunStatus.FAILED, run.status());
+            assertEquals(FailureCategory.WORKER_CONTRACT_VIOLATION, run.failureCategory());
+            assertEquals("city", run.workerContractIssues().getFirst().field());
+            assertEquals("MISSING_REQUIRED_INPUT_BINDING", run.workerContractIssues().getFirst().reasonCode());
+            assertEquals(1, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+        }
+    }
+
+    @Test
+    void recoveryRejectsWorkerContractVersionMismatchBeforeCallingModelOrTool() throws Exception {
+        ToolRegistry tools = tools();
+        WorkerRegistry workers = contractWorkers();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        ToolRegistry countingTools = new ToolRegistry();
+        countingTools.register(new TestTool("weather", toolCalls));
+        ModelClient model = (messages, definitions) -> {
+            modelCalls.incrementAndGet();
+            throw new AssertionError("version mismatch must be rejected before model call");
+        };
+        PlannedTask stalePlan = new PlannedTask("forecast", "weather", "Look up forecast", List.of(),
+                List.of("weather"), List.of(parentBinding("city", "Beijing")), List.of("Return forecast"), null);
+        RunRecord checkpoint = RunRecord.create("contract-mismatch", "Check Beijing weather", Duration.ofMinutes(1),
+                RunType.COLLABORATIVE);
+        checkpoint.transitionTo(RunStatus.RUNNING, java.time.Instant.now(), null);
+        checkpoint.setTaskPlan(new TaskPlan(TaskPlan.Route.DELEGATE, List.of(stalePlan),
+                List.of(new TaskPlan.Deliverable("weather", "forecast"))));
+        checkpoint.addChildTask(ChildTaskRecord.pending(stalePlan));
+        InMemoryRunStore store = new InMemoryRunStore();
+        store.save(checkpoint);
+
+        try (ToolExecutor executor = new ToolExecutor(countingTools, Duration.ofSeconds(1))) {
+            RunRecord run = workflow(model, countingTools, workers, executor, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)))
+                    .resume("contract-mismatch");
+            assertEquals(RunStatus.FAILED, run.status());
+            assertEquals(FailureCategory.WORKER_CONTRACT_MISMATCH, task(run, "forecast").failureCategory());
+            assertEquals(0, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+        }
+    }
+
+    @Test
+    void recoveryRevalidatesPersistedPlanBeforeCreatingMissingChildTaskRecords() throws Exception {
+        ToolRegistry tools = new ToolRegistry();
+        AtomicInteger toolCalls = new AtomicInteger();
+        tools.register(new TestTool("weather", toolCalls));
+        WorkerRegistry workers = contractWorkers();
+        AtomicInteger modelCalls = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            modelCalls.incrementAndGet();
+            throw new AssertionError("invalid persisted plan must fail before model call");
+        };
+        PlannedTask invalidPlan = new PlannedTask("forecast", "weather", "Look up forecast", List.of(),
+                List.of("weather"), List.of(), List.of("Return forecast"), "v1");
+        RunRecord checkpoint = RunRecord.create("invalid-plan-recovery", "Check weather", Duration.ofMinutes(1),
+                RunType.COLLABORATIVE);
+        checkpoint.transitionTo(RunStatus.RUNNING, java.time.Instant.now(), null);
+        checkpoint.setTaskPlan(new TaskPlan(TaskPlan.Route.DELEGATE, List.of(invalidPlan),
+                List.of(new TaskPlan.Deliverable("weather", "forecast"))));
+        InMemoryRunStore store = new InMemoryRunStore();
+        store.save(checkpoint);
+
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            RunRecord run = workflow(model, tools, workers, executor, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)))
+                    .resume("invalid-plan-recovery");
+
+            assertEquals(RunStatus.FAILED, run.status());
+            assertEquals(FailureCategory.WORKER_CONTRACT_VIOLATION, run.failureCategory());
+            assertEquals(0, modelCalls.get());
+            assertEquals(0, toolCalls.get());
+        }
+    }
+
+    @Test
     void persistsSupervisorTraceContextWithDurableChildTask() {
         ToolRegistry tools = tools();
         var telemetry = new AgentTelemetry(null, ObservationRegistry.create());
@@ -850,6 +1024,24 @@ class CollaborativeWorkflowTest {
         registry.register(new WorkerSpec("numbers", "Calculate values", "numbers prompt", List.of("calculator"), 2, 3));
         registry.register(new WorkerSpec("writer", "Explain supplied facts", "writer prompt", List.of("weather"), 2, 3));
         return registry;
+    }
+
+    private static WorkerRegistry contractWorkers() throws Exception {
+        WorkerRegistry registry = new WorkerRegistry();
+        registry.register(new WorkerSpec("weather", "Weather worker", "private weather system prompt",
+                List.of("weather"), 2, 3, "v1", "weather lookup",
+                JSON.readTree("""
+                        {"type":"object","properties":{"city":{"type":"string"}},"required":["city"],
+                         "additionalProperties":false}
+                        """), "city name", "city and forecast", JSON.readTree("""
+                        {"type":"object","properties":{"city":{"type":"string"},"forecast":{"type":"string"}},
+                         "required":["city","forecast"],"additionalProperties":false}
+                        """)));
+        return registry;
+    }
+
+    private static InputBinding parentBinding(String field, String value) {
+        return new InputBinding(field, InputBinding.Source.PARENT_REQUEST, JSON.getNodeFactory().textNode(value), null, null);
     }
 
     private static ToolRegistry tools() {

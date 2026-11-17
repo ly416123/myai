@@ -1,6 +1,6 @@
 # 阶段五需求草案：Worker 能力注册与子任务数据契约
 
-> **文档状态：** 已将用户确认的 Worker 输入信息缺口纳入下一阶段候选需求。本文限定此项能力的范围；阶段五完整目标、优先级和验收计划仍应在阶段五启动时结合届时架构基线补齐。本文描述目标需求，不代表功能已经实现。
+> **文档状态：** 阶段五已启动，当前按本文件的 Worker 契约范围实施。本文描述需求与验收目标；当前已实现内容、待完成内容及验收结果以[阶段五实施计划](phase-05-implementation-plan.md)和最终阶段总结为准。
 
 ## 阶段五启动前置里程碑：阶段四交付闭环
 
@@ -22,7 +22,7 @@
 - L5 已部署与验收提交匹配的应用镜像，Flyway 为 V7，Worker、数据库和观测组件健康；数据库迁移及部署检查没有造成已有 Run 数据变更。
 - 阶段四总结和路线图记录实际提交、CI run、镜像摘要、部署状态及验证命令；只有全部条件满足后，才把阶段五状态从“候选”改为“可启动”。
 
-**当前状态：前置里程碑已完成（2026-11-17）；阶段五尚未开始，可进入阶段五需求确认与实现。** 阶段四提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机 `clean verify` 为 204 项通过、0 失败/错误/跳过；GitHub Actions run [43977781637](https://github.com/ly416123/myai/actions/runs/43977781637) 的 `verify` 与 `publish-images` 均成功。GHCR Runtime 镜像 amd64 manifest 为 `sha256:2a72c184118cad308aa207100126891d2fedd4bbee8010f29b016454a19ea43f`，代理镜像 amd64 manifest 为 `sha256:2069428a52d8b947402d18960a7d283753fdbc63cd4f346a854351d2c4ba0556`。L5 的 Worker 已按 GHCR SHA 标签完成 2/2 滚动；数据库成功迁移至 V7，评测表可查询，既有 12 条 Run 及状态分布未改变；Prometheus 10/10 条规则健康、2/2 targets UP、无 firing 告警，Tempo 和 Grafana 健康。详细证据和镜像导入说明见[阶段四总结](../stages/phase-04-summary.html)与[企业升级路线图](../architecture/enterprise-migration-roadmap.md)。
+**当前状态：前置里程碑已完成（2026-11-17）；阶段五实施中。** 阶段四提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机 `clean verify` 为 204 项通过、0 失败/错误/跳过；GitHub Actions run [43977781637](https://github.com/ly416123/myai/actions/runs/43977781637) 的 `verify` 与 `publish-images` 均成功。GHCR Runtime 镜像 amd64 manifest 为 `sha256:2a72c184118cad308aa207100126891d2fedd4bbee8010f29b016454a19ea43f`，代理镜像 amd64 manifest 为 `sha256:2069428a52d8b947402d18960a7d283753fdbc63cd4f346a854351d2c4ba0556`。L5 的 Worker 已按 GHCR SHA 标签完成 2/2 滚动；数据库成功迁移至 V7，评测表可查询，既有 12 条 Run 及状态分布未改变；Prometheus 10/10 条规则健康、2/2 targets UP、无 firing 告警，Tempo 和 Grafana 健康。详细证据和镜像导入说明见[阶段四总结](../stages/phase-04-summary.html)与[企业升级路线图](../architecture/enterprise-migration-roadmap.md)。
 
 ## 1. 背景与当前缺口
 

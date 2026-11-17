@@ -29,6 +29,36 @@ class FileCollaborativeRecoveryTest {
     @TempDir Path directory;
 
     @Test
+    void jsonCheckpointRoundTripsWorkerVersionBindingsAcceptanceCriteriaAndResolvedInput() {
+        InputBinding binding = new InputBinding("city", InputBinding.Source.PARENT_REQUEST,
+                JSON.getNodeFactory().textNode("Oslo"), null, null);
+        PlannedTask planned = new PlannedTask("weather-task", "weather", "lookup weather", List.of(),
+                List.of("forecast"), List.of(binding), List.of("return structured forecast"), "v3");
+        RunRecord checkpoint = RunRecord.create("contract-file-checkpoint", "weather request",
+                Duration.ofMinutes(1), RunType.COLLABORATIVE);
+        checkpoint.setTaskPlan(new TaskPlan(TaskPlan.Route.DELEGATE, List.of(planned),
+                List.of(new TaskPlan.Deliverable("forecast", "weather forecast"))));
+        checkpoint.addChildTask(ChildTaskRecord.pending(planned).withResolvedInput(
+                JSON.createObjectNode().put("city", "Oslo")));
+        checkpoint.setWorkerContractIssues(List.of(new WorkerContractIssue("city", "PARENT_REQUEST", "TEST_MARKER")));
+        checkpoint.setPlanningInputUtf8Bytes(456L);
+        JsonFileRunStore first = new JsonFileRunStore(directory, JSON);
+        first.save(checkpoint);
+
+        RunRecord restored = new JsonFileRunStore(directory, JSON).find(checkpoint.runId()).orElseThrow();
+
+        assertEquals("v3", restored.taskPlan().tasks().getFirst().workerVersion());
+        assertEquals("Oslo", restored.taskPlan().tasks().getFirst().inputBindings().getFirst()
+                .parentValue().asText());
+        assertEquals("return structured forecast", restored.taskPlan().tasks().getFirst()
+                .acceptanceCriteria().getFirst());
+        assertEquals("v3", restored.childTasks().getFirst().workerVersion());
+        assertEquals("Oslo", restored.childTasks().getFirst().resolvedInput().path("city").asText());
+        assertEquals("TEST_MARKER", restored.workerContractIssues().getFirst().reasonCode());
+        assertEquals(456L, restored.planningInputUtf8Bytes());
+    }
+
+    @Test
     void parentJsonCheckpointRestoresTaskIdsWorkerStepsAndPendingTaskAcrossStoreInstances() {
         AtomicInteger modelCalls = new AtomicInteger();
         ModelClient model = (messages, tools) -> {
