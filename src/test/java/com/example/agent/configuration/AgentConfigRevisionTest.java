@@ -57,7 +57,7 @@ class AgentConfigRevisionTest {
     @Test
     void rejectsObviousCredentialsInPromptAndSkills() {
         assertThrows(IllegalArgumentException.class, () -> new AgentConfigDocument(1,
-                "Use key=sk-1234567890abcdef", List.of(),
+                "Use key=" + "sk-" + "1234567890abcdef", List.of(),
                 new ModelSettings("deepseek", "deepseek-flash", Map.of(), "secret://providers/deepseek"),
                 Set.of(), Map.of(), new RuntimeSettings(10, 20, 2, 300_000, 10, 8, 2)));
         assertThrows(IllegalArgumentException.class, () -> new AgentConfigDocument(1, "Safe prompt",

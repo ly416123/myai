@@ -125,7 +125,7 @@
       <li>拒绝的发布门禁保留审计尝试但不生成 Release；未审批 Release 不能激活、灰度或回滚。</li>
       <li>测试在 Colima Docker 环境实际启动 PostgreSQL 16.16，并应用 Flyway V10、V11、V12；真实模型 API 与真实密钥未被调用或读取。</li>
       <li>验收命令：<code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code>。结果：<strong>BUILD SUCCESS，257 tests，0 failures，0 errors，0 skipped</strong>。</li>
-      <li>文档检查包括 <code>git diff --check</code>、示例 JSON 解析和 Kubernetes YAML 解析。未执行阶段六远端 CI、镜像发布或 L5 部署。</li>
+      <li>Gitleaks v8.30.1 按 CI 相同方式扫描 105 个提交，结果无命中。历史提交中的一条单测虚构凭据样例被精确指纹加入忽略清单；当前测试改为运行时拼接样例，仍覆盖拒绝行为。文档检查包括 <code>git diff --check</code>、示例 JSON 解析和 Kubernetes YAML 解析。阶段六远端 CI、镜像发布或 L5 部署当时尚未执行。</li>
     </ul>
     <p>本机开始全量验证前检查到 macOS Data 卷约 104 GiB 可用，Colima Docker 数据卷约 92 GiB 可用；该容量只代表检查时状态，不是长期资源承诺。没有清理共享 Docker 数据。</p>
   </section>
