@@ -1,6 +1,8 @@
 package com.example.agent.memory;
 
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -77,6 +79,25 @@ class MemoryServiceTest {
         assertTrue(degraded.degraded());
         assertTrue(degraded.entries().isEmpty());
         assertThrows(MemoryService.MemoryOperationException.class, service::list);
+    }
+
+    @Test
+    void telemetryUsesOnlyBoundedTagsAndNeverIncludesMemoryText() {
+        var meters = new SimpleMeterRegistry();
+        var telemetry = new com.example.agent.observability.AgentTelemetry(meters, ObservationRegistry.NOOP);
+        var service = new MemoryService(new InMemoryMemoryStore(), new MemoryRetriever(5, 2_000),
+                "private-namespace", 10, telemetry);
+        service.remember("private.key", MemoryKind.FACT, "private-content-9f11");
+        service.snapshot("private-query-4ab2");
+
+        String meterLabels = meters.getMeters().stream().map(meter -> meter.getId().toString())
+                .reduce("", (left, right) -> left + " " + right);
+        assertTrue(meters.counter("agent.memory.operations", "operation", "remember", "result", "success").count() == 1);
+        assertTrue(meters.counter("agent.memory.operations", "operation", "retrieve", "result", "success").count() == 1);
+        assertFalse(meterLabels.contains("private-namespace"));
+        assertFalse(meterLabels.contains("private.key"));
+        assertFalse(meterLabels.contains("private-content-9f11"));
+        assertFalse(meterLabels.contains("private-query-4ab2"));
     }
 
     private static MemoryService service(InMemoryMemoryStore store, String namespace, int limit) {

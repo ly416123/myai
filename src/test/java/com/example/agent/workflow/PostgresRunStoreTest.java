@@ -89,6 +89,22 @@ class PostgresRunStoreTest {
     }
 
     @Test
+    void persistsMemoryContextSnapshotInsideRunCheckpoint() {
+        String runId = "pg-memory-snapshot-" + java.util.UUID.randomUUID();
+        var entry = new com.example.agent.memory.MemoryEntry(java.util.UUID.randomUUID(), "default",
+                "answer.language", com.example.agent.memory.MemoryKind.PREFERENCE, "回答使用中文", 2,
+                Instant.parse("2026-11-18T00:00:00Z"), Instant.parse("2026-11-18T00:00:00Z"));
+        var snapshot = new com.example.agent.memory.MemoryContextSnapshot(false, "policy-v1", List.of(entry), 20);
+        RunRecord run = RunRecord.create(runId, "总结", Duration.ofMinutes(2));
+        run.setMemoryContextSnapshot(snapshot);
+        store.save(run);
+
+        RunRecord loaded = store.find(runId).orElseThrow();
+
+        assertEquals(snapshot, loaded.memoryContextSnapshot());
+    }
+
+    @Test
     void appendsSanitizedToolAuditEventsOnlyWhenToolStepStateChanges() {
         String runId = "pg-tool-audit-" + java.util.UUID.randomUUID();
         Instant now = Instant.now();

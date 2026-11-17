@@ -12,6 +12,8 @@ import com.example.agent.evaluation.EvaluationService;
 import com.example.agent.evaluation.EvaluationRepository;
 import com.example.agent.configuration.AgentConfigurationService;
 import com.example.agent.configuration.ReleaseApproval;
+import com.example.agent.memory.MemoryService;
+import com.example.agent.memory.MemoryKind;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -31,6 +33,67 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.eq;
 
 class MainTest {
+    @Test
+    void explicitMemoryCommandsInvokeOnlyTheRequestedManagementOperation() throws Exception {
+        MemoryService memory = mock(MemoryService.class);
+        var stored = new com.example.agent.memory.MemoryEntry(java.util.UUID.randomUUID(), "default", "trip.city",
+                MemoryKind.PREFERENCE, "Beijing", 1, java.time.Instant.now(), java.time.Instant.now());
+        org.mockito.Mockito.when(memory.remember("trip.city", MemoryKind.PREFERENCE, "Beijing")).thenReturn(stored);
+        org.mockito.Mockito.when(memory.update("trip.city", MemoryKind.FACT, "Beijing local time zone")).thenReturn(stored);
+        when(memory.list()).thenReturn(java.util.List.of(stored));
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        InputStream originalIn = System.in;
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try (PrintStream capturedOut = new PrintStream(output, true, StandardCharsets.UTF_8)) {
+            System.setIn(new ByteArrayInputStream(("/memory remember trip.city preference Beijing\n"
+                    + "/memory list\n/memory update trip.city fact Beijing local time zone\n"
+                    + "/memory delete trip.city\n/exit\n").getBytes(StandardCharsets.UTF_8)));
+            System.setOut(capturedOut);
+            new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
+                    mock(RunSubmissionService.class), runId -> java.util.List.of(),
+                    mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                    mock(EvaluationRepository.class), new ObjectMapper(), null, memory)
+                    .run(new DefaultApplicationArguments(new String[0]));
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+
+        verify(memory).remember("trip.city", MemoryKind.PREFERENCE, "Beijing");
+        verify(memory).list();
+        verify(memory).update("trip.city", MemoryKind.FACT, "Beijing local time zone");
+        verify(memory).delete("trip.city");
+        verifyNoInteractions(runtime);
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("记忆已删除"));
+    }
+
+    @Test
+    void naturalLanguageMemoryRequestDoesNotMutateStoreWithoutExplicitCommand() throws Exception {
+        AgentRuntime runtime = mock(AgentRuntime.class);
+        var result = RunRecord.create("normal-run", "记住我喜欢中文", java.time.Duration.ofSeconds(1));
+        result.setStatus(RunStatus.SUCCEEDED);
+        result.setFinalAnswer("好的。");
+        when(runtime.runTracked("记住我喜欢中文")).thenReturn(result);
+        MemoryService memory = mock(MemoryService.class);
+        InputStream originalIn = System.in;
+        PrintStream originalOut = System.out;
+        try {
+            System.setIn(new ByteArrayInputStream("记住我喜欢中文\n/exit\n".getBytes(StandardCharsets.UTF_8)));
+            System.setOut(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+            new Main(runtime, mock(CollaborativeWorkflow.class), new InMemoryRunStore(), new AgentProperties(),
+                    mock(RunSubmissionService.class), runId -> java.util.List.of(),
+                    mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                    mock(EvaluationRepository.class), new ObjectMapper(), null, memory)
+                    .run(new DefaultApplicationArguments(new String[0]));
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+        verify(runtime).runTracked("记住我喜欢中文");
+        verifyNoInteractions(memory);
+    }
+
     @Test
     void onceModeRunsConfiguredTaskWithoutReadingStdin() {
         AgentRuntime runtime = mock(AgentRuntime.class);

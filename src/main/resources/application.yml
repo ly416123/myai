@@ -33,6 +33,10 @@ agent:
   max-parallelism: ${AGENT_MAX_PARALLELISM:2}
   configuration-environment: ${AGENT_CONFIG_ENVIRONMENT:local}
   configuration-agent-id: ${AGENT_CONFIG_AGENT_ID:myai}
+  memory-namespace: ${AGENT_MEMORY_NAMESPACE:default}
+  memory-max-entries: ${AGENT_MEMORY_MAX_ENTRIES:5}
+  memory-max-characters: ${AGENT_MEMORY_MAX_CHARACTERS:2000}
+  memory-namespace-limit: ${AGENT_MEMORY_NAMESPACE_LIMIT:500}
   configuration-evaluation-minimum-cases: ${AGENT_CONFIG_EVAL_MINIMUM_CASES:1}
   configuration-auto-rollback-enabled: ${AGENT_CONFIG_AUTO_ROLLBACK_ENABLED:false}
   configuration-auto-rollback-minimum-samples: ${AGENT_CONFIG_AUTO_ROLLBACK_MINIMUM_SAMPLES:10}

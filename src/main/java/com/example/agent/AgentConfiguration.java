@@ -35,6 +35,11 @@ import com.example.agent.evaluation.EvaluationEvaluatorRegistry;
 import com.example.agent.workflow.RuntimeConfig;
 import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.RunRetentionService;
+import com.example.agent.memory.MemoryContextProvider;
+import com.example.agent.memory.MemoryRetriever;
+import com.example.agent.memory.MemoryService;
+import com.example.agent.memory.MemoryStore;
+import com.example.agent.memory.PostgresMemoryStore;
 import com.example.agent.workflow.ChildTaskPollingWorker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
@@ -99,6 +104,23 @@ public class AgentConfiguration {
     }
 
     @Bean
+    MemoryStore memoryStore(JdbcTemplate jdbc) {
+        return new PostgresMemoryStore(jdbc);
+    }
+
+    @Bean
+    MemoryRetriever memoryRetriever(AgentProperties properties) {
+        return new MemoryRetriever(properties.getMemoryMaxEntries(), properties.getMemoryMaxCharacters());
+    }
+
+    @Bean
+    MemoryService memoryService(MemoryStore store, MemoryRetriever retriever, AgentProperties properties,
+                               AgentTelemetry telemetry) {
+        return new MemoryService(store, retriever, properties.getMemoryNamespace(), properties.getMemoryNamespaceLimit(),
+                telemetry);
+    }
+
+    @Bean
     ActiveConfigurationProvider activeConfigurationProvider(AgentConfigStore store) {
         return new ActiveConfigurationProvider(store);
     }
@@ -145,9 +167,10 @@ public class AgentConfiguration {
 
     @Bean
     RunSubmissionService runSubmissionService(RunStore store, AgentProperties properties,
-                                              RunSubmissionPolicy policy, ActiveConfigurationProvider configProvider) {
+                                              RunSubmissionPolicy policy, ActiveConfigurationProvider configProvider,
+                                              MemoryContextProvider memoryContextProvider) {
         return new RunSubmissionService(store, properties.getTaskTimeout(), policy, configProvider,
-                properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
+                properties.getConfigurationEnvironment(), properties.getConfigurationAgentId(), memoryContextProvider);
     }
 
     @Bean
@@ -204,9 +227,10 @@ public class AgentConfiguration {
     AgentRuntime agentRuntime(ModelClient model, ToolRegistry tools, ToolExecutor executor,
                               RunStore store, RuntimeConfig runtimeConfig, AgentTelemetry telemetry,
                               RunLeasePolicy leasePolicy, ActiveConfigurationProvider configProvider,
-                              AgentProperties properties) {
+                              AgentProperties properties, MemoryContextProvider memoryContextProvider) {
         return new AgentRuntime(model, tools, executor, store, runtimeConfig, telemetry, leasePolicy,
-                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
+                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId(), null,
+                memoryContextProvider);
     }
 
     @Bean
@@ -269,9 +293,11 @@ public class AgentConfiguration {
     CollaborativeWorkflow collaborativeWorkflow(ModelClient model, ToolRegistry tools, WorkerRegistry workers,
                                                 RunStore store, CollaborationConfig config, ObjectMapper mapper,
                                                 AgentTelemetry telemetry, RunLeasePolicy leasePolicy,
-                                                ActiveConfigurationProvider configProvider, AgentProperties properties) {
+                                                ActiveConfigurationProvider configProvider, AgentProperties properties,
+                                                MemoryContextProvider memoryContextProvider) {
         return new CollaborativeWorkflow(model, tools, workers, store, config, mapper, telemetry, leasePolicy,
-                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
+                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId(), null,
+                memoryContextProvider);
     }
 
     @Bean(initMethod = "start", destroyMethod = "close")

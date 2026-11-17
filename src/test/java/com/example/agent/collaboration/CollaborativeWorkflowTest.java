@@ -101,6 +101,28 @@ class CollaborativeWorkflowTest {
     }
 
     @Test
+    void collaborativeNoSplitFallbackReceivesThePinnedMemorySnapshot() throws Exception {
+        ToolRegistry tools = tools();
+        String remembered = "single-agent-memory-marker";
+        var snapshot = new MemoryContextSnapshot(false, "policy-v1", List.of(new MemoryEntry(
+                java.util.UUID.randomUUID(), "default", "answer.style", MemoryKind.PREFERENCE, remembered, 1,
+                java.time.Instant.now(), java.time.Instant.now())), 10);
+        AtomicReference<List<com.example.agent.model.Message>> fallbackMessages = new AtomicReference<>();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) return plan("{\"route\":\"NO_SPLIT\",\"tasks\":[],\"deliverables\":[]}");
+            fallbackMessages.set(List.copyOf(messages));
+            return new ModelResponse("done", List.of());
+        };
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, new WorkerRegistry(), new InMemoryRunStore(),
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)), JSON,
+                    AgentTelemetry.noop(), RunLeasePolicy.DEFAULT, null, null, null, null, ignored -> snapshot);
+            assertEquals(RunStatus.SUCCEEDED, workflow.runTracked("simple request").status());
+        }
+        assertTrue(fallbackMessages.get().stream().anyMatch(message -> message.content().contains(remembered)));
+    }
+
+    @Test
     void refusesToStartRunWhenPinnedWorkerContractVersionIsUnavailable() throws Exception {
         ToolRegistry tools = tools();
         WorkerRegistry workers = contractWorkers();

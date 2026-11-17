@@ -1,6 +1,7 @@
 package com.example.agent.memory;
 
 import org.springframework.dao.DuplicateKeyException;
+import com.example.agent.observability.AgentTelemetry;
 
 import java.util.List;
 import java.util.Locale;
@@ -18,28 +19,41 @@ public final class MemoryService implements MemoryContextProvider {
     private final MemoryRetriever retriever;
     private final String namespace;
     private final int namespaceLimit;
+    private final AgentTelemetry telemetry;
 
     public MemoryService(MemoryStore store, MemoryRetriever retriever, String namespace, int namespaceLimit) {
+        this(store, retriever, namespace, namespaceLimit, AgentTelemetry.noop());
+    }
+
+    public MemoryService(MemoryStore store, MemoryRetriever retriever, String namespace, int namespaceLimit,
+                         AgentTelemetry telemetry) {
         if (store == null || retriever == null || namespace == null || namespace.isBlank()
-                || namespace.length() > 120 || namespaceLimit < 1 || namespaceLimit > 500) {
+                || namespace.length() > 120 || namespaceLimit < 1 || namespaceLimit > 500 || telemetry == null) {
             throw new IllegalArgumentException("Invalid memory service configuration");
         }
         this.store = store;
         this.retriever = retriever;
         this.namespace = namespace;
         this.namespaceLimit = namespaceLimit;
+        this.telemetry = telemetry;
     }
 
     public MemoryEntry remember(String key, MemoryKind kind, String content) {
         String normalizedKey = validateKey(key);
         validateContent(kind, content);
+        long started = System.nanoTime();
         try {
-            return store.create(namespace, normalizedKey, kind, content, namespaceLimit);
+            MemoryEntry created = store.create(namespace, normalizedKey, kind, content, namespaceLimit);
+            record("remember", "success", started);
+            return created;
         } catch (DuplicateKeyException duplicate) {
+            record("remember", "conflict", started);
             throw new MemoryAlreadyExistsException();
         } catch (com.example.agent.memory.MemoryLimitExceededException exceeded) {
+            record("remember", "rejected", started);
             throw new MemoryService.MemoryLimitExceededException();
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("remember", "failure", started);
             throw new MemoryOperationException();
         }
     }
@@ -47,38 +61,59 @@ public final class MemoryService implements MemoryContextProvider {
     public MemoryEntry update(String key, MemoryKind kind, String content) {
         String normalizedKey = validateKey(key);
         validateContent(kind, content);
+        long started = System.nanoTime();
         MemoryEntry current = find(normalizedKey).orElseThrow(MemoryNotFoundException::new);
         try {
-            return store.update(namespace, current.memoryId(), current.version(), kind, content)
-                    .orElseThrow(MemoryConflictException::new);
+            Optional<MemoryEntry> updated = store.update(namespace, current.memoryId(), current.version(), kind, content);
+            if (updated.isEmpty()) {
+                record("update", "conflict", started);
+                throw new MemoryConflictException();
+            }
+            record("update", "success", started);
+            return updated.get();
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("update", "failure", started);
             throw new MemoryOperationException();
         }
     }
 
     public void delete(String key) {
         String normalizedKey = validateKey(key);
+        long started = System.nanoTime();
         MemoryEntry current = find(normalizedKey).orElseThrow(MemoryNotFoundException::new);
         try {
-            if (!store.delete(namespace, current.memoryId(), current.version())) throw new MemoryConflictException();
+            if (!store.delete(namespace, current.memoryId(), current.version())) {
+                record("delete", "conflict", started);
+                throw new MemoryConflictException();
+            }
+            record("delete", "success", started);
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("delete", "failure", started);
             throw new MemoryOperationException();
         }
     }
 
     public Optional<MemoryEntry> find(String key) {
         String normalizedKey = validateKey(key);
+        long started = System.nanoTime();
         try {
-            return store.findByKey(namespace, normalizedKey);
+            Optional<MemoryEntry> found = store.findByKey(namespace, normalizedKey);
+            record("find", found.isPresent() ? "success" : "not_found", started);
+            return found;
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("find", "failure", started);
             throw new MemoryOperationException();
         }
     }
 
     public List<MemoryEntry> list() {
+        long started = System.nanoTime();
         try {
-            return store.listActive(namespace, namespaceLimit);
+            List<MemoryEntry> entries = store.listActive(namespace, namespaceLimit);
+            record("list", "success", started);
+            return entries;
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("list", "failure", started);
             throw new MemoryOperationException();
         }
     }
@@ -86,11 +121,20 @@ public final class MemoryService implements MemoryContextProvider {
     @Override
     public MemoryContextSnapshot snapshot(String query) {
         if (query == null) throw new IllegalArgumentException("Memory query is required");
+        long started = System.nanoTime();
         try {
-            return retriever.retrieve(query, store.listActive(namespace, namespaceLimit));
+            MemoryContextSnapshot snapshot = retriever.retrieve(query, store.listActive(namespace, namespaceLimit));
+            record("retrieve", "success", started);
+            return snapshot;
         } catch (MemoryStoreUnavailableException unavailable) {
+            record("retrieve", "degraded", started);
             return MemoryContextSnapshot.degradedEmpty();
         }
+    }
+
+    private void record(String operation, String result, long startedNanos) {
+        telemetry.recordMemoryOperation(operation, result,
+                java.time.Duration.ofNanos(Math.max(0, System.nanoTime() - startedNanos)));
     }
 
     private static String validateKey(String key) {

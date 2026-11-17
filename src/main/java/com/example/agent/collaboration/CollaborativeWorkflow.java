@@ -455,8 +455,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         return offered.stream().filter(tool -> allowed.contains(tool.name())).toList();
     }
 
-    private List<Message> modelMessages(RunRecord run, List<Message> original, String workerId) {
-        boolean supervisor = "supervisor".equals(workerId);
+    private List<Message> modelMessages(RunRecord run, List<Message> original, boolean includeMemory) {
         StringBuilder prompt = new StringBuilder();
         if (run.configurationSnapshot() != null) {
             var document = run.configurationSnapshot().document();
@@ -464,7 +463,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
                     .append("\n").append(skill.content());
         }
-        if (supervisor) {
+        if (includeMemory) {
             String memoryPrompt = MemoryPrompt.render(run.memoryContextOrEmpty());
             if (!memoryPrompt.isBlank()) prompt.append("\n\n").append(memoryPrompt);
         }
@@ -947,7 +946,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             try {
                 ModelResponse response;
                 try (var scope = stepObservation.openScope()) {
-                    response = callModel(messages, tools, run, workerId, control, stepObservation);
+                    response = callModel(messages, tools, run, taskId == null, control, stepObservation);
                 }
                 checkCancelled(run, control);
                 run.replaceStep(stepId, run.step(stepId).finish(RunStepStatus.SUCCEEDED, Instant.now(), null,
@@ -987,11 +986,11 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     }
 
     private ModelResponse callModel(List<Message> messages, List<com.example.agent.model.ToolDefinition> tools,
-                                    RunRecord run, String workerId, Control control, Observation stepObservation)
+                                    RunRecord run, boolean includeMemory, Control control, Observation stepObservation)
             throws WorkflowAbort, ModelClientException {
         FutureTask<ModelResponse> task = new FutureTask<>(() -> {
             try (var scope = stepObservation.openScope()) {
-                return model.complete(modelMessages(run, messages, workerId), modelTools(run, tools), modelOptions(run));
+                return model.complete(modelMessages(run, messages, includeMemory), modelTools(run, tools), modelOptions(run));
             }
         });
         control.registerModelTask(task);
