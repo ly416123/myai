@@ -101,21 +101,25 @@ void rejectsMissingRequiredWorkerInputBeforeExecution() {
 
 ## 任务 6：验收、文档和发布
 
-- [ ] 量化规划请求的 UTF-8 字节数作为稳定可复核的上下文基线；如果没有历史等价输入则只报告当前测量，不宣称下降比例或成本节省。
-- [ ] 更新 README 阶段索引、阶段五需求/实施计划状态和路线图事实；功能未验收前不标记阶段完成。
+- [x] 量化规划请求的 UTF-8 字节数作为稳定可复核的上下文基线；只报告当前测量，不宣称下降比例或成本节省。
+- [x] 更新 README 阶段索引、阶段五需求/实施计划状态和路线图事实；功能未验收前不标记阶段完成。
 - [x] 本机完整测试、Prometheus 规则、镜像 pin、Kustomize、`git diff --check` 全部通过；记录实际测试数量和跳过数。
-- [ ] 按项目资源约束核验 L5 与本机空间，完成当前提交 GitHub Actions 后再部署 SHA 固定镜像到 L5；仅做一个有界 smoke/integration，不调用真实模型、不写入示例/业务 Run，验证 Worker/DB/OTel/Prometheus/Grafana 与数据未变。
-- [ ] 验收通过后新增 `phase-05-summary.html`（分层架构图 + 执行数据流），更新 README 链接；提交、推送并检查对应 CI。
-- [ ] 阶段五已验收范围和仍未覆盖的企业工程缺口分开说明；不得声称生产级或 exactly-once。
+- [x] 按项目资源约束核验 L5 与本机空间，完成当前提交 GitHub Actions 后再部署 SHA 固定镜像到 L5；仅做有界启动/基础设施检查，不调用真实模型、不写入示例/业务 Run，验证 Worker/DB/OTel/Prometheus/Grafana 与数据未变。
+- [x] 验收通过后新增 `phase-05-summary.html`（分层架构图 + 执行数据流），更新 README 链接；提交、推送并检查对应 CI。
+- [x] 阶段五已验收范围和仍未覆盖的企业工程缺口分开说明；不得声称生产级或 exactly-once。
 
 ## 当前执行记录
 
-- 基线分支：`main`，阶段五分支：`phase-05-worker-contract`，工作树：`~/.config/superpowers/worktrees/MyAi/phase-05-worker-contract`。
+- 基线分支：`main`，阶段五分支：`codex/phase-05-worker-contract`，工作树：`~/.config/superpowers/worktrees/MyAi/phase-05-worker-contract`。
 - 基线命令：`DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify`。
 - 基线结果：BUILD SUCCESS，204 项通过，0 失败、0 错误、0 跳过。
 - 阶段五定向验证：`mvn --batch-mode --no-transfer-progress -Dtest=WorkerContractValidatorTest,WorkerRegistryContractTest,CollaborativeWorkflowTest,FileCollaborativeRecoveryTest test`，38 项通过，0 失败、0 错误、0 跳过；新增恢复边界回归后 `CollaborativeWorkflowTest` 为 29 项通过。
-- 阶段五完整本机验证：`DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify`，BUILD SUCCESS，217 项通过，0 失败、0 错误、0 跳过；PostgreSQL 与 OTel Testcontainers 集成测试实际执行。
+- 阶段五完整本机验证：`DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify`，BUILD SUCCESS，218 项通过，0 失败、0 错误、0 跳过；PostgreSQL 与 OTel Testcontainers 集成测试实际执行。
 - 部署配置检查：`bash ops/tests/prometheus-alerts-test.sh` 通过；`bash ops/tests/image-digests-test.sh` 五个固定镜像摘要均通过；`kubectl kustomize deploy/overlays/l5` 通过；`git diff --check` 通过。
-- 本机资源操作前快照：macOS Data 约 102–103 GiB 可用，Colima `/var/lib/docker` 约 93 GiB 可用，Docker 镜像约 1.407 GB，无容器、Volume 或 build cache；部署前必须重新核验 L5 及本机资源。
-- GitHub CI 与 L5 部署验收尚未执行，不代表阶段验收完成。
+- 确定性 Fake 规划样例记录的规划消息内容为 1,356 UTF-8 字节；字段只统计规划消息内容，不包含 SDK 序列化/传输开销。没有可比历史样例，不据此推断 Token 或成本变化。
+- 当前代码提交 `09178a55fe44e90858ff20ea33ede87a2d44bc26` 的 GitHub Actions run [44002315867](https://github.com/ly416123/myai/actions/runs/44002315867) 成功；`verify` 中 Maven 218 项、Gitleaks、Prometheus 规则测试、镜像 pin、镜像构建/扫描与仓库配置扫描均通过。默认分支专属 `publish-images` 不在此 feature branch 运行。
+- L5 使用同一代码提交的本机 linux/amd64 Docker 构建归档并导入 containerd，再以 SHA 标签部署；两个 Worker 均 Ready，容器内 JAR SHA-256 为 `739c7aa684f37ec9e215d26ad6709fe64207db5fb82fcc30c4d512c771c4b436`。这是可核对的同提交本机产物，不声称为 GHCR/CI 发布镜像。
+- L5 有界验收时 Node 为 Ready，CPU 434m（10%）、内存 3973Mi（54%）；Worker 2/2 Ready，PostgreSQL schema V7，Run 分布 `CANCELLED=1, FAILED=1, SUCCEEDED=10` 与部署前一致；Prometheus 10/10 rules healthy、2/2 targets up、0 active alerts，Tempo `/ready` 与 Grafana `/api/health` 正常，全部 MyAI Pod Ready、PVC Bound，其他命名空间工作负载未修改。未调用真实模型或提交 Run。
+- 部署时第一次使用的 OCI 归档触发 containerd 临时 `import-日期` 名称问题；回滚期间旧 Worker 保持 Ready。重新导出包含 GHCR `RepoTags` 的 Docker 归档并清理本次旧 CRI 缓存后部署成功。临时导入 Pod 已删除；不触碰 PVC、旧镜像或其他 namespace。
+- 当前阶段五代码、功能验收、CI 与 L5 有界部署检查已通过；完整证据见[阶段五总结](../stages/phase-05-summary.html)。
 - 本计划各任务的完成情况以目标代码/测试证据更新；计划不是已交付功能的声明。

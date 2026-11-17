@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阶段五总结：版本化 Worker 契约</title>
+  <style>
+    :root { color-scheme: light; --ink:#182230; --muted:#475467; --line:#d0d5dd; --panel:#f8fafc; --blue:#eaf2ff; --green:#ecfdf3; --amber:#fffaeb; --purple:#f4f3ff; }
+    body { max-width:1160px; margin:2rem auto; padding:0 1.25rem 4rem; color:var(--ink); font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    h1,h2,h3 { line-height:1.25; } h1 { margin-bottom:.25rem; } h2 { margin-top:2.4rem; padding-bottom:.4rem; border-bottom:1px solid var(--line); }
+    .meta,.note { color:var(--muted); } .callout { padding:1rem 1.2rem; border:1px solid var(--line); border-radius:.65rem; background:var(--panel); }
+    .pass { background:var(--green); border-color:#abefc6; } .limited { background:var(--amber); border-color:#fedf89; }
+    figure { margin:1rem 0 1.6rem; padding:1rem; border:1px solid var(--line); border-radius:.75rem; background:#fff; overflow-x:auto; }
+    figcaption { color:var(--muted); margin-top:.6rem; font-size:.94rem; }
+    svg { display:block; width:100%; min-width:820px; height:auto; }
+    .layer { fill:#f8fafc; stroke:#98a2b3; stroke-width:1.5; rx:12; }
+    .node { fill:#fff; stroke:#667085; stroke-width:1.5; rx:9; }
+    .node-blue { fill:var(--blue); stroke:#528bff; } .node-green { fill:var(--green); stroke:#32a36a; }
+    .node-amber { fill:var(--amber); stroke:#d99a17; } .node-purple { fill:var(--purple); stroke:#7a5af8; }
+    .title { font-size:17px; font-weight:700; fill:#101828; } .label { font-size:14px; fill:#344054; }
+    .small { font-size:12px; fill:#475467; } .arrow { stroke:#475467; stroke-width:2; fill:none; marker-end:url(#arrow); }
+    .dashed { stroke-dasharray:6 5; } table { width:100%; border-collapse:collapse; margin:1rem 0; }
+    th,td { text-align:left; vertical-align:top; border:1px solid var(--line); padding:.65rem .75rem; } th { background:#f2f4f7; }
+    code { overflow-wrap:anywhere; } @media print { body { margin:0; max-width:none; } figure { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="meta">MyAi · 阶段五 · 验收时点：2026-11-17 · 代码提交：<code>09178a55fe44e90858ff20ea33ede87a2d44bc26</code></p>
+    <h1>版本化 Worker 输入/输出契约</h1>
+    <p class="meta">本页记录阶段五验收时点的实际实现。图示是此阶段交付快照，不代表所有企业级运行平台能力均已完成。</p>
+  </header>
+
+  <section class="callout pass" aria-labelledby="verdict">
+    <h2 id="verdict">验收结论</h2>
+    <p><strong>阶段五 Worker 契约范围验收通过。</strong>静态 Worker 定义已有版本、输入/输出 JSON Schema 和规划摘要；计划绑定有明确来源，派发前验证输入，Worker 结构化输出经 Schema 校验后才作为交付物持久化；恢复时校验契约版本。父 Run、Worker 消息上下文与结构化交付物仍分开管理。</p>
+    <p>本机 Maven 全量构建 218 项测试通过，0 失败、0 错误、0 跳过；同一代码提交的 GitHub Actions <a href="https://github.com/ly416123/myai/actions/runs/44002315867">run 44002315867</a> 的 `verify` 成功。L5 两个 Worker 副本已更新且 Ready，PostgreSQL 仍为 schema V7，既有 12 条 Run 状态未变，监控检查通过。阶段验收不等于整体生产就绪。</p>
+  </section>
+
+  <section>
+    <h2>1. 阶段目标与上一阶段遗留问题</h2>
+    <p>阶段四交付了可持久化、可复现、可比较的评测生命周期；协作 Worker 仍在应用启动时静态配置。阶段四结束时，Worker 定义没有必需输入/可选输入和输出契约，子任务计划没有显式表达业务输入字段及来源。Supervisor 主要靠模型从自然语言猜测子任务需要什么，运行前无法机械检查必填信息，Worker 结果也没有统一结构可供下游任务校验。</p>
+    <p>这会让相同 Worker 随任务、模型提示词变化而接收不同背景，也可能让父任务把未验证的输出传给依赖任务。阶段五把能力定义、任务输入和交付物固定为可校验的数据契约，同时保留既有共享预算、租约、fencing、工具权限与未知副作用不重放语义。</p>
+  </section>
+
+  <section>
+    <h2>2. 本阶段交付</h2>
+    <ul>
+      <li><strong>静态 Worker 契约：</strong>WorkerSpec 加入版本、输入/输出 Schema、短职责与输出摘要及能力标签；启动时检查重复 ID、非法 Schema、远程 Schema 引用和未知工具引用。</li>
+      <li><strong>规划与依赖绑定：</strong>Supervisor 只收到规划所需的 Worker 能力摘要和输入/输出字段信息；计划保存验收条件、Worker 版本和字段绑定。输入只允许来自父请求提取值，或同一 DAG 中直接依赖任务的 JSON Pointer 输出。</li>
+      <li><strong>派发前校验：</strong>程序检查 DAG、依赖、必需字段、来源与 JSON Schema。所有字段完成解析并通过输入 Schema 前，不启动 Worker；已解析输入和初始 Worker 消息先保存到 Run 检查点。</li>
+      <li><strong>上下文隔离与结构化交付：</strong>Worker 只接收绑定后的输入、任务目标、验收条件及其直接依赖结果。Worker 最终答案必须是符合输出 Schema 的 JSON object；通过验证后才保存为结构化结果供父 Workflow 汇总或下游绑定。</li>
+      <li><strong>版本恢复语义：</strong>执行与恢复都核对保存的 Worker 版本。契约版本不同或已持久化计划/执行投影不完整时 fail closed，使用脱敏、机器可读的契约错误，不重新解释输入，不调用模型或工具。</li>
+      <li><strong>可观测上下文尺寸：</strong>RunRecord 保存规划消息内容的 UTF-8 字节数。确定性 Fake 样例测得 1,356 字节；测量不含 SDK 请求序列化/传输开销，且没有同构历史样例，因此不据此声称 Token、延迟或费用下降。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 id="architecture">3. 阶段五整体分层架构</h2>
+    <figure>
+      <svg viewBox="0 0 1100 700" role="img" aria-labelledby="arch-title arch-desc">
+        <title id="arch-title">阶段五验收时的 MyAi 分层架构</title>
+        <desc id="arch-desc">接入层、Workflow与Harness层、协作编排与调度层、执行与能力层、状态与基础设施层，以及横切观测能力和数据流。</desc>
+        <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#475467"/></marker></defs>
+        <rect class="layer" x="20" y="20" width="1060" height="70"/><text class="title" x="42" y="48">接入层</text>
+        <rect class="node node-blue" x="260" y="34" width="300" height="42"/><text class="label" x="284" y="60">CLI / 本地任务提交边界</text>
+        <rect class="node" x="600" y="34" width="400" height="42"/><text class="label" x="622" y="60">HTTP API 与生产身份授权：暂不交付</text>
+
+        <rect class="layer" x="20" y="105" width="1060" height="90"/><text class="title" x="42" y="135">Workflow 与 Harness 层</text>
+        <rect class="node node-purple" x="260" y="120" width="300" height="56"/><text class="label" x="282" y="144">CollaborativeWorkflow</text><text class="small" x="282" y="163">Run 生命周期、检查点与共享预算</text>
+        <rect class="node node-blue" x="600" y="120" width="400" height="56"/><text class="label" x="622" y="144">Agent Harness / Runtime</text><text class="small" x="622" y="163">模型交互、工具循环、消息上下文</text>
+
+        <rect class="layer" x="20" y="210" width="1060" height="125"/><text class="title" x="42" y="240">协作编排与调度层</text>
+        <rect class="node node-purple" x="260" y="254" width="210" height="58"/><text class="label" x="284" y="278">Supervisor Planner</text><text class="small" x="284" y="298">提出 DAG 计划</text>
+        <rect class="node" x="500" y="254" width="220" height="58"/><text class="label" x="520" y="278">TaskPlanValidator</text><text class="small" x="520" y="298">Schema、依赖和契约校验</text>
+        <rect class="node node-blue" x="750" y="254" width="250" height="58"/><text class="label" x="773" y="278">依赖推进 / 并发调度</text><text class="small" x="773" y="298">就绪任务派给静态 Worker</text>
+
+        <rect class="layer" x="20" y="350" width="1060" height="125"/><text class="title" x="42" y="380">执行与能力层</text>
+        <rect class="node node-green" x="260" y="394" width="300" height="58"/><text class="label" x="282" y="418">WorkerRegistry / WorkerSpec</text><text class="small" x="282" y="438">版本化 I/O Schema + 能力摘要</text>
+        <rect class="node node-green" x="600" y="394" width="190" height="58"/><text class="label" x="620" y="418">Worker Harness</text><text class="small" x="620" y="438">隔离消息上下文</text>
+        <rect class="node" x="825" y="394" width="175" height="58"/><text class="label" x="846" y="418">工具 / ToolExecutor</text><text class="small" x="846" y="438">逐工具参数 Schema</text>
+
+        <rect class="layer" x="20" y="490" width="1060" height="105"/><text class="title" x="42" y="520">状态、存储与基础设施适配层</text>
+        <rect class="node node-amber" x="260" y="535" width="365" height="42"/><text class="label" x="282" y="562">RunStore → PostgreSQL / JSONB 检查点</text>
+        <rect class="node node-amber" x="660" y="535" width="340" height="42"/><text class="label" x="682" y="562">ModelClient → OpenAI SDK / DeepSeek 适配</text>
+
+        <rect class="node node-blue" x="260" y="620" width="740" height="50"/><text class="label" x="282" y="642">横切：日志、指标、Trace 与安全错误分类；跨 Run、Step、Worker 记录</text><text class="small" x="282" y="660">本阶段未引入消息队列、动态 Worker 注册中心或独立评测平台</text>
+
+        <path class="arrow" d="M410 90 L410 118"/><path class="arrow" d="M560 148 L600 148"/>
+        <path class="arrow" d="M410 176 L410 250"/><path class="arrow" d="M470 283 L498 283"/><path class="arrow" d="M720 283 L748 283"/>
+        <path class="arrow" d="M875 312 L875 390"/><path class="arrow" d="M560 423 L598 423"/><path class="arrow" d="M790 423 L823 423"/>
+        <path class="arrow" d="M710 452 L710 532"/><path class="arrow" d="M500 577 L500 618"/>
+        <path class="arrow dashed" d="M800 176 C1045 190 1040 370 1000 392"/>
+      </svg>
+      <figcaption>逻辑分层图，范围为 2026-11-17 阶段五验收形态。Supervisor 产生候选计划，程序校验并负责调度；模型能力通过 ModelClient 被多个上层组件调用，因此不放在单一业务层。阶段五不新增服务进程、数据库表或迁移。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>4. 一次协作任务的数据流</h2>
+    <figure>
+      <svg viewBox="0 0 1100 330" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">Worker 契约执行与恢复数据流</title>
+        <desc id="flow-desc">用户请求经 Supervisor 规划，程序验证计划和输入绑定，Worker 执行并校验结构化输出，父任务汇总；恢复时检查保存契约版本。</desc>
+        <defs><marker id="arrow2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#475467"/></marker></defs>
+        <g class="arrow" marker-end="url(#arrow2)">
+          <path d="M190 90 L260 90"/><path d="M430 90 L500 90"/><path d="M680 90 L750 90"/><path d="M920 90 L990 90"/>
+          <path d="M835 135 L835 210"/><path d="M720 245 L620 245"/><path d="M430 245 L330 245"/>
+        </g>
+        <rect class="node node-blue" x="25" y="58" width="165" height="64"/><text class="label" x="53" y="84">用户目标</text><text class="small" x="53" y="104">Run 初始消息</text>
+        <rect class="node node-purple" x="260" y="58" width="170" height="64"/><text class="label" x="285" y="84">Supervisor 规划</text><text class="small" x="285" y="104">提出 DAG 与字段绑定</text>
+        <rect class="node" x="500" y="58" width="180" height="64"/><text class="label" x="521" y="84">程序校验与解析</text><text class="small" x="521" y="104">必填、Schema、来源</text>
+        <rect class="node node-green" x="750" y="58" width="170" height="64"/><text class="label" x="775" y="84">Worker 执行</text><text class="small" x="775" y="104">独立消息上下文</text>
+        <rect class="node node-green" x="990" y="58" width="95" height="64"/><text class="label" x="1005" y="84">校验输出</text><text class="small" x="1005" y="104">JSON Schema</text>
+        <rect class="node node-amber" x="720" y="210" width="230" height="68"/><text class="label" x="745" y="236">持久化交付物 / Step</text><text class="small" x="745" y="258">版本、已解析输入、结果和状态</text>
+        <rect class="node node-purple" x="430" y="210" width="190" height="68"/><text class="label" x="457" y="236">父 Workflow 汇总</text><text class="small" x="457" y="258">只消费结构化结果</text>
+        <rect class="node node-amber" x="25" y="210" width="305" height="68"/><text class="label" x="50" y="236">RunStore 检查点恢复</text><text class="small" x="50" y="258">先比对契约版本；不匹配则停止执行</text>
+        <path class="arrow dashed" marker-end="url(#arrow2)" d="M820 210 C820 170 825 160 835 135"/>
+        <path class="arrow dashed" marker-end="url(#arrow2)" d="M430 245 C370 200 350 160 345 125"/>
+        <text class="small" x="340" y="184">检查点已保存后才派发</text>
+      </svg>
+      <figcaption>执行边界：模型负责提出计划和生成符合契约的结果；Java 程序负责字段解析、Schema/DAG 校验、状态和预算推进、持久化及恢复决策。工具调用仍由已有 Harness 执行。</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>5. 关键设计选择</h2>
+    <table>
+      <thead><tr><th>选择</th><th>替代方案</th><th>采用原因与边界</th></tr></thead>
+      <tbody>
+        <tr><td>启动时静态 WorkerRegistry</td><td>数据库动态注册中心、实例心跳和服务发现</td><td>需求明确限定静态能力契约；不引入新服务或维护面。实例选择、容量感知和动态扩缩容仍未覆盖。</td></tr>
+        <tr><td>Worker 级契约 + 工具级 Schema 分离</td><td>把全部工具参数并入一份“Worker 总 Schema”</td><td>Worker 契约描述业务任务输入和交付物；工具注册表继续维护各工具自己的参数 Schema，避免职责混淆。</td></tr>
+        <tr><td>父请求仅按绑定字段传递</td><td>复制完整父对话，或自动摘要所有历史</td><td>降低无关背景泄漏和上下文增长；阶段五不做自动摘要、向量检索或父子全量消息合并。</td></tr>
+        <tr><td>JSONB 检查点保存兼容字段</td><td>新增关系表和 Flyway 迁移</td><td>当前存储已用整体检查点并提供查询投影；新增字段可纳入现有 payload，避免阶段五扩大数据库模型。File/JSON 与 PostgreSQL 往返测试验证持久化。</td></tr>
+        <tr><td>Draft 2020-12 JSON Schema，拒绝远程 `$ref`</td><td>仅依赖模型提示约束或自制字段校验器</td><td>复用已有 validator 依赖，在程序边界做确定性输入/输出检查；schema 不访问远程资源。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. 验收方式与实际结果</h2>
+    <table>
+      <thead><tr><th>检查</th><th>命令 / 方式</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>本机完整构建与测试</td><td><code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code></td><td>BUILD SUCCESS；218 tests，0 failures、0 errors、0 skipped；PostgreSQL 与 OTel Testcontainers 实际运行。</td></tr>
+        <tr><td>阶段五 Fake 样例测量</td><td><code>mvn --batch-mode --no-transfer-progress -Dtest=CollaborativeWorkflowTest#versionedWorkerReceivesOnlyBoundInputAndStoresValidatedStructuredOutput test</code></td><td>1 test 通过；规划消息内容 1,356 UTF-8 字节。该字段不含 HTTP/SDK 序列化和传输开销。</td></tr>
+        <tr><td>工作流、告警与镜像配置</td><td><code>bash ops/tests/prometheus-alerts-test.sh</code>；<code>bash ops/tests/image-digests-test.sh</code>；<code>kubectl kustomize deploy/overlays/l5</code>；<code>git diff --check</code></td><td>告警规则测试通过；5 个第三方镜像 digest 校验通过；Kustomize 渲染成功；差异空白检查通过。</td></tr>
+        <tr><td>GitHub Actions</td><td><a href="https://github.com/ly416123/myai/actions/runs/44002315867">run 44002315867</a></td><td>同代码提交的 verify 成功，包含远端 Maven/PostgreSQL 测试、Gitleaks、告警/镜像 pin 校验、Runtime 与代理镜像构建和扫描、配置扫描。feature branch 不满足 workflow 的默认分支 `publish-images` 条件。</td></tr>
+        <tr><td>L5 有界部署检查</td><td>SHA 标签 Worker 滚动；查看 Pod/启动日志、Flyway、Prometheus API、Grafana/Tempo readiness、Run 状态计数</td><td>Worker 2/2 Ready；JAR SHA-256 `739c7aa684f37ec9e215d26ad6709fe64207db5fb82fcc30c4d512c771c4b436`；schema V7，无迁移；10/10 Prometheus rules healthy、2/2 targets up、0 active alerts；Tempo Ready、Grafana database ok；Run 状态仍为 `CANCELLED=1, FAILED=1, SUCCEEDED=10`。</td></tr>
+      </tbody>
+    </table>
+    <p>L5 使用与代码提交匹配的本机 linux/amd64 Docker 构建归档，通过 SSH 导入 containerd。GHCR 路径作为不可变 SHA 镜像名写入 L5 Deployment 和 overlay，但此 feature branch 未触发 GHCR 发布；部署的归档不是声称为 CI 发布产物。部署初次尝试遇到容器镜像导入生成临时名称的问题，旧 Worker 保持服务并回滚；改用包含完整 RepoTags 的归档后滚动成功。期间没有提交 Run、改迁移、改 PVC 或触碰其他命名空间。</p>
+  </section>
+
+  <section class="callout limited">
+    <h2>7. 已知限制与下一步</h2>
+    <ul>
+      <li>父请求是自由文本。模型可提取候选输入值，程序校验字段和类型，但系统不能证明提取值在语义上真实来自用户原文；后续需要更强的来源引用/校验策略时再单独设计。</li>
+      <li>Worker 能力定义为启动时静态装配，不含动态实例注册、健康心跳、容量感知、能力池负载均衡或多集群调度。</li>
+      <li>L5 检查验证应用启动、数据库连接/版本、基础指标和平台健康，未运行真实模型或完整协作请求；阶段行为由 Fake 和确定性测试验证。</li>
+      <li>GitHub `publish-images` 仅在默认分支 push 后执行；阶段五 feature branch 只完成 CI verify/build/scan。真正发布 GHCR 镜像需在未来获授权的主分支发布流程完成后再次核对 Registry digest。</li>
+      <li>Schema 合法不代表任务结果正确；1,356 字节是一个固定测试样例的消息内容基线，不代表通用上下文优化或 Agent 整体质量保证。</li>
+      <li>现有工具的外部副作用 exactly-once 语义未改变；Worker 契约不提供幂等协议、事务或补偿机制。HTTP API 与生产身份认证/授权仍按项目范围暂缓。</li>
+    </ul>
+    <p>后续阶段应先确认业务目标，再决定是否需要 Worker 运行时注册/能力池调度，或面向调用方的任务查询与通知接口；本总结不自动把这些列为下一阶段承诺。</p>
+  </section>
+
+  <footer>
+    <p class="meta">相关文档：<a href="../plans/phase-05-requirements.md">阶段五需求</a> · <a href="../plans/phase-05-implementation-plan.md">阶段五实施计划</a> · <a href="../architecture/enterprise-migration-roadmap.md">企业升级路线图</a> · <a href="../../README.md">README</a></p>
+  </footer>
+</body>
+</html>
