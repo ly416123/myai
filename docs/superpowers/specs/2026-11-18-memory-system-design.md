@@ -64,7 +64,7 @@ flowchart TB
 
 - `key` 规范化为小写，限制为 `[a-z0-9][a-z0-9._-]{0,63}`；同一 namespace 内唯一。
 - `remember` 遇到已存在的活动 key 时拒绝，不静默覆盖；只能用 `update` 修改。
-- `delete` 删除当前活动条目，保留不含 key/正文的审计事件。已写入模型请求或 Run 检查点的副本不可能被追溯撤回。
+- `delete` 将当前条目标为已删除 tombstone，并清除记忆表中的 key/正文；保留不含 key/正文的审计事件。已写入模型请求或 Run 检查点的副本不可能被追溯撤回。
 - 不支持通过普通自然语言触发记忆写入；例如“记住……”若不是 `/memory remember` 命令，仍按普通任务处理且不改变记忆库。
 - 记忆正文设置长度上限（首版建议 2,000 个 Unicode 码点），禁止空白正文；不允许记录密钥、凭据或完整对话转录。
 
@@ -90,7 +90,7 @@ flowchart TB
 
 ## 6. 存储、一致性与恢复
 
-- 新增 Flyway V13，创建 `agent_memory` 与 `agent_memory_event`；按 `(namespace, memory_key)` 唯一约束，检索索引至少覆盖 `(namespace, status)`。
+- 新增 Flyway V13，创建 `agent_memory` 与 `agent_memory_event`；活动条目按 `(namespace, memory_key)` 唯一，检索索引覆盖 `(namespace, status)`。删除只保留正文/key 清空的 tombstone。
 - Run 检查点 JSON 新增可空 `memoryContextSnapshot`。旧检查点反序列化为“无记忆快照”，不回查当前记忆，防止旧 Run 恢复时意外注入新资料。
 - 同步创建与队列创建共享同一应用服务，避免两个入口检索语义不一致；Run 首次保存前固定快照，提交失败不留下半成品 Run。
 - Worker 执行与恢复只读 Run 上保存的快照，不依赖 Worker 本地配置或记忆库检索时机。

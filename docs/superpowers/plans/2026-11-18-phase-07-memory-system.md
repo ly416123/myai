@@ -55,7 +55,7 @@
 - 创建：`src/main/java/com/example/agent/memory/MemoryRetriever.java`
 - 创建：`src/main/java/com/example/agent/memory/MemoryPrompt.java`
 
-- [ ] **步骤 1：先写排名、中文和预算的失败测试**
+- [x] **步骤 1：先写排名、中文和预算的失败测试**
 
 ```java
 @Test
@@ -84,25 +84,25 @@ void capsEntryCountAndCountsSupplementaryCharactersAsOneCodePoint() {
 }
 ```
 
-- [ ] **步骤 2：运行对应测试确认因类型/实现缺失而失败**
+- [x] **步骤 2：运行对应测试确认因类型/实现缺失而失败**
 
 运行：`mvn -Dtest=MemoryRetrieverTest test`
 
 预期：编译失败，缺少新模型类型；不能因测试代码自身语法错误失败。
 
-- [ ] **步骤 3：实现模型和确定性 Unicode 检索**
+- [x] **步骤 3：实现模型和确定性 Unicode 检索**
 
 实现 `MemoryKind { PREFERENCE, FACT }`。`MemoryEntry` 是不可变 record，字段为 `UUID memoryId, String namespace, String key, MemoryKind kind, String content, long version, Instant createdAt, Instant updatedAt`。`MemoryContextSnapshot` 保存 `boolean degraded, String policyVersion, List<MemoryEntry> entries, int characterCount`，构造时防御性复制。
 
 `MemoryRetriever.retrieve(String query, List<MemoryEntry> entries)` 以 NFKC + `Locale.ROOT` 规范化；key 精确匹配排第一，其次对 ASCII 字母数字按 token、连续汉字按相邻二元组计算 Jaccard 重合分数，再按 memory UUID 稳定排序。格式化预算按真正注入的 `MemoryPrompt` Unicode 码点数计算（Java 使用 `String.codePointCount`），超限即跳过该条而继续尝试更短条目；最多 5 条且总计不超过配置字符数。
 
-- [ ] **步骤 4：运行单测确认通过**
+- [x] **步骤 4：运行单测确认通过**
 
 运行：`mvn -Dtest=MemoryRetrieverTest test`
 
 预期：新增测试全部通过。
 
-- [ ] **步骤 5：提交任务 1**
+- [x] **步骤 5：提交任务 1**
 
 ```bash
 git add src/main/java/com/example/agent/memory src/test/java/com/example/agent/memory/MemoryRetrieverTest.java
@@ -119,7 +119,7 @@ git commit -m "feat(记忆): 添加结构化条目与确定性检索（任务1�
 - 创建：`src/main/java/com/example/agent/memory/PostgresMemoryStore.java`
 - 创建：`src/main/resources/db/migration/V13__create_agent_memory_store.sql`
 
-- [ ] **步骤 1：先写 PostgreSQL 行为测试**
+- [x] **步骤 1：先写 PostgreSQL 行为测试**
 
 ```java
 @Test
@@ -130,29 +130,34 @@ void updateIsVersionCheckedAndAuditNeverStoresMemoryText() {
     assertTrue(store.update("default", created.memoryId(), created.version(),
             MemoryKind.PREFERENCE, "过期并发值").isEmpty());
     assertEquals(2, store.events(created.memoryId()).size());
-    assertFalse(store.auditText(created.memoryId()).contains("默认使用简体中文"));
+    Set<String> columns = Set.copyOf(jdbc.queryForList("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'agent_memory_event'
+            """, String.class));
+    assertFalse(columns.contains("content"));
+    assertFalse(columns.contains("memory_key"));
 }
 ```
 
-- [ ] **步骤 2：运行集成测试确认迁移/存储能力缺失**
+- [x] **步骤 2：运行集成测试确认迁移/存储能力缺失**
 
 运行：`mvn -Dtest=PostgresMemoryStoreTest test`
 
 预期：测试编译失败，缺少 store/迁移类型；Testcontainers 若 Docker 不可用则记录环境阻塞，不以跳过的测试宣称通过。
 
-- [ ] **步骤 3：实现 Flyway V13 与 Store 接口**
+- [x] **步骤 3：实现 Flyway V13 与 Store 接口**
 
-迁移创建 `agent_memory`：UUID 主键、namespace、key、kind、正文、version、status、时间；唯一约束 `(namespace, memory_key)`，检索索引 `(namespace, status)`。`agent_memory_event` 不设正文或 key 字段，按 append-only 设计记录 UUID、memory UUID、operation、version、occurred_at、固定来源。更新用版本条件更新；删除与审计写入同一事务。PostgresStore 每个事务失败统一包装，不暴露 SQL 参数/异常文本。
+迁移创建 `agent_memory`：UUID 主键、namespace、key、kind、正文、version、status、时间；活动条目用部分唯一索引 `(namespace, memory_key) WHERE status='ACTIVE'`，检索索引 `(namespace, status)`。`agent_memory_event` 不设正文或 key 字段，按 append-only 设计记录 UUID、memory UUID、operation、version、occurred_at、固定来源。更新用版本条件更新；删除在同一事务内写事件并将状态设为 `DELETED`、清空 key/正文，允许之后用同一 key 新建。Store 不记录异常原文；MemoryService 将存储错误映射为脱敏的领域错误，保留唯一键冲突供显式冲突提示。
 
-Store 接口提供 `create`、`update(expectedVersion)`、`delete(expectedVersion)`、`findByKey`、`listActive(limit)`、`countActive`。InMemory Fake 使用锁实现同样唯一性与版本条件。
+Store 接口提供 `create`、`update(expectedVersion)`、`delete(expectedVersion)`、`findByKey`、`listActive(limit)`、`countActive`、`events(memoryId)`。InMemory Fake 使用锁实现同样唯一性、tombstone 和版本条件。
 
-- [ ] **步骤 4：运行 PostgreSQL 测试确认通过**
+- [x] **步骤 4：运行 PostgreSQL 测试确认通过**
 
 运行：`mvn -Dtest=PostgresMemoryStoreTest test`
 
-预期：迁移、插入、唯一冲突、版本冲突、删除审计及事务回滚测试通过，审计表查询不到正文或 key。
+预期：迁移、插入、唯一冲突、并发版本冲突、删除审计、append-only 和事务回滚测试通过，审计表查询不到正文或 key。
 
-- [ ] **步骤 5：提交任务 2**
+- [x] **步骤 5：提交任务 2**
 
 ```bash
 git add src/main/java/com/example/agent/memory src/main/resources/db/migration/V13__create_agent_memory_store.sql src/test/java/com/example/agent/memory/PostgresMemoryStoreTest.java
