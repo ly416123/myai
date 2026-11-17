@@ -28,7 +28,7 @@
   <header>
     <h1>阶段六：Agent 配置版本、发布与运行时切换</h1>
     <p class="status"><strong>验收结论：</strong>阶段六功能本机范围验收通过；加入 PR 候选发布回归测试后，全量 Maven 验证通过 258 项测试，0 失败、0 错误、0 跳过。PostgreSQL Testcontainers 集成测试实际运行 Flyway 至 V12。</p>
-    <p class="caveat"><strong>交付边界：</strong>阶段六分支的 GitHub Actions <code>verify</code> 已通过；为支持合并前 L5 验收，现将分支 push 的候选 GHCR 发布加入工作流，但该工作流改动尚未经过远端 CI，候选镜像尚未发布，L5 部署也未执行。PR #10 仍需满足现有审批规则；Auto-merge 不会绕过该审批。</p>
+    <p class="caveat"><strong>交付边界：</strong>阶段六分支的 PR 验证和分支候选镜像发布均已通过，候选镜像已部署到 L5 并完成基础运行验收；Worker 2/2 Ready，数据库迁移至 V12。PR #10 尚未合入 <code>main</code>，当前等待 GitHub 要求的审批；Auto-merge 会在审批和必需检查满足后执行，不绕过保护规则。L5 当前运行的是分支候选镜像，不是默认分支正式发布镜像。</p>
     <p>总结对应时间点：2026-11-17，本地功能分支 <code>codex/phase-06-agent-config-release</code>。架构图描述的是该阶段实际实现形态，不是目标生产架构。</p>
   </header>
 
@@ -125,7 +125,9 @@
       <li>拒绝的发布门禁保留审计尝试但不生成 Release；未审批 Release 不能激活、灰度或回滚。</li>
       <li>测试在 Colima Docker 环境实际启动 PostgreSQL 16.16，并应用 Flyway V10、V11、V12；真实模型 API 与真实密钥未被调用或读取。</li>
       <li>阶段功能验收命令：<code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code>，当时为 257 tests 全通过；本次增加候选发布策略回归测试后重复执行，同一命令结果为 <strong>BUILD SUCCESS，258 tests，0 failures，0 errors，0 skipped</strong>。</li>
-      <li>阶段六分支提交 <code>5de8b6f</code>、<code>a490e35</code> 的 GitHub Actions <code>verify</code> 通过，覆盖 Maven、Gitleaks、告警规则、第三方镜像摘要、镜像构建与扫描。Gitleaks v8.30.1 扫描 105 个提交后无命中；历史提交中的一条单测虚构凭据样例被精确指纹加入忽略清单，当前测试改为运行时拼接样例并继续覆盖拒绝行为。为合并前 L5 验收，CI 现计划在 branch push 验证通过后发布 <code>candidate-&lt;SHA&gt;-&lt;run-id&gt;-&lt;attempt&gt;</code> 镜像；该工作流变更需等待本次远端 CI，不能将此前 verify 通过误作此次候选发布通过。</li>
+      <li>GitHub Actions PR 验证运行 <code>44092609780</code> 通过；分支 push 运行 <code>44092595531</code> 的 <code>verify</code> 与 <code>publish-images</code> 均通过，覆盖 Maven、Gitleaks、告警规则、第三方镜像摘要、镜像构建和扫描。Gitleaks v8.30.1 扫描 105 个提交后无命中；历史提交中的一条单测虚构凭据样例被精确指纹加入忽略清单，当前测试改为运行时拼接样例并继续覆盖拒绝行为。分支候选标签为 <code>candidate-a4c7e254aefc05221bf02a09d5bbc126e148111e-44092595531-1</code>；Runtime 镜像 OCI index digest 为 <code>sha256:ab586267f2b9955fc5c28a5eda2d9d25098fe25da61673c9754e57f172269484</code>，镜像 revision label 与提交 SHA 一致。</li>
+      <li>2026-11-17 将 amd64 候选镜像导入 L5 K3s containerd，仅更新 <code>myai-agent-worker</code> Deployment。滚动升级前 Node 为 Ready、MemoryPressure/DiskPressure 为 False，Worker 2/2 Ready，PostgreSQL PVC Bound；当时节点 CPU 为 434m（10%）、内存 3749Mi（51%），根卷约 80GiB 可用。Deployment 使用 <code>maxUnavailable=0</code>、<code>maxSurge=1</code>，滚动完成后 Worker 2/2 Ready、无新 Pod 重启。</li>
+      <li>L5 Worker 启动时 Flyway 从 V7 成功应用 V8–V12；数据库只读查询确认 V12 及阶段六配置表存在。Prometheus Ready，Collector 与 Tempo 两个活动抓取目标均为 UP。以上是候选镜像在单节点 L5 上的受控部署验收，不证明高可用、数据库灾备或生产身份授权。</li>
     </ul>
     <p>本机开始全量验证前检查到 macOS Data 卷约 104 GiB 可用，Colima Docker 数据卷约 92 GiB 可用；该容量只代表检查时状态，不是长期资源承诺。没有清理共享 Docker 数据。</p>
   </section>
@@ -133,7 +135,7 @@
   <section>
     <h2>6. 剩余限制与后续方向</h2>
     <ul>
-      <li>阶段六分支已推送且既有 CI 通过；PR #10 仍需审批。新的候选镜像流程通过 CI 后可先部署 L5 并迁移 V8–V12，无需等待 PR 合入；合入默认分支后再发布正式 SHA 镜像。L5 部署仍需单独完成并记录验收。</li>
+      <li>阶段六分支已推送，PR 验证、候选镜像发布和 L5 候选部署验收均已通过。PR #10 等待必需审批；合入默认分支后还需由 main 工作流发布正式 SHA 镜像，并按运维流程切换和核验正式镜像。候选部署不能替代正式发布验收。</li>
       <li>HTTP API、生产身份认证授权、真实双人审批和用户/租户级灰度仍未交付。当前 CLI 仅适用于受控环境。</li>
       <li>自动回滚仅按运行失败类别统计，不能代表模型回答质量；默认关闭，也没有告警通知接收端。</li>
       <li>凭据字面量检测是保守规则，不能替代完整的 Secret 管理或内容安全审查。</li>

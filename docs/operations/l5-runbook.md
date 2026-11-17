@@ -238,4 +238,4 @@ kubectl --context "$CTX" -n "$NS" exec myai-postgres-0 -- psql -U myai -d myai -
 
 自动回滚默认关闭。只有显式设置 `AGENT_CONFIG_AUTO_ROLLBACK_ENABLED=true` 才启用；其他默认值为：最小样本数 `10`、失败率阈值 `0.5`、观察窗口 `PT15M`、冷却期 `PT30M`、扫描上限 `1000`、检查间隔与初始延迟均为 `PT30S`。阈值统计灰度候选 Release 的 SUCCEEDED/PARTIAL/FAILED Run，不能代表语义质量。样本不足、扫描结果达到上限或冷却期内不会做出回滚决定。要启用前须由运行负责人评估环境流量与阈值，再通过部署配置显式设置；不建议仅为本地测试打开定时器。
 
-本阶段的本机测试和 V12 迁移验证不构成 L5 部署验收。后续部署前应重新核对 L5 节点、PVC、Pod requests/limits、数据库迁移备份/恢复边界及镜像来源；本项目当前没有数据库备份/恢复流程，不能把回滚应用配置等同于数据库回滚。
+2026-11-17 阶段六候选镜像已完成一次 L5 受控部署验收：分支 push 的 `verify` 与 `publish-images` 均成功；候选 Runtime 镜像 revision label 与提交 `a4c7e254aefc05221bf02a09d5bbc126e148111e` 一致；滚动后 Worker 2/2 Ready、无新 Pod 重启，Flyway V8–V12 成功并到 V12，Prometheus Ready、Collector 与 Tempo targets 均 UP。部署前节点 Ready、MemoryPressure/DiskPressure 为 False，Worker 2/2 Ready，相关 PVC Bound；本次只修改 MyAI Worker Deployment。此验收只证明当前候选版本在 L5 的基础运行状态，不代表 PR 已合入或正式 main 镜像已发布。后续正式部署仍需重新核对节点、PVC、Pod requests/limits、数据库迁移边界及镜像来源；本项目当前没有数据库备份/恢复流程，不能把应用回滚等同于数据库回滚。

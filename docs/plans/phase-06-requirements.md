@@ -1,6 +1,6 @@
 # 阶段六需求草案：Agent 配置版本、发布与运行时切换
 
-> **文档状态：** 阶段六范围内功能于 2026-11-17 完成本机验收；最初 257 项测试全部通过，对本次 PR 候选发布策略新增回归测试后，当前 `mvn clean verify` 为 258 项通过，0 失败、错误、跳过；对应 V12 数据库迁移由 Testcontainers PostgreSQL 集成测试实际执行。GitHub Actions `verify` 已在阶段六分支提交 `5de8b6f` 与 `a490e35` 通过。为允许 PR 合并前进行 L5 验收，分支 push 现配置在 `verify` 成功后发布独立 `candidate-<commit SHA>-<run ID>-<attempt>` 镜像；本次工作流调整尚待远端 CI 验证，候选镜像尚未发布，L5 部署尚未执行。默认分支正式 SHA 发布与 PR 审批门槛保持不变。阶段总结见[阶段六验收总结](../stages/phase-06-summary.html)。在线评测仍是后续候选，不属于本阶段范围。
+> **文档状态：** 阶段六功能于 2026-11-17 完成本机验收；`mvn clean verify` 为 258 项通过，0 失败、错误、跳过；Testcontainers PostgreSQL 实际应用 V12。GitHub Actions PR 验证运行 `44092609780` 通过，分支 push 运行 `44092595531` 的验证和候选镜像发布均通过。候选镜像 `candidate-a4c7e254aefc05221bf02a09d5bbc126e148111e-44092595531-1` 已部署到 L5，Worker 2/2 Ready、数据库 V12、Prometheus Ready 且两个活动 target 均 UP。PR #10 尚未合入 `main`，等待 GitHub 要求的审批；Auto-merge 已启用，仍受审批和必需检查约束。L5 目前运行分支候选版，合入 `main` 后还需发布并验证正式 SHA 镜像。在线评测仍是后续候选，不属于本阶段范围。阶段总结见[阶段六验收总结](../stages/phase-06-summary.html)。
 
 ## 1. 背景与目标
 
@@ -85,7 +85,7 @@
 
 - 本阶段已实现独立 Release 审批记录；由于当前没有生产认证授权，`local-cli` 仅作为流程审计字段，不证明操作者身份，也不构成双人审批或生产访问控制。
 - 自动回滚默认关闭。启用后以灰度候选 Run 的终态失败率作为操作阈值；它不评估语义质量，不构成质量保证。样本不足、扫描页达到上限或冷却期内均不触发回滚。
-- 本机完整验收使用 Fake/确定性测试和 Testcontainers PostgreSQL，不访问真实模型或密钥。远端分支 `verify` 已通过；候选镜像发布策略调整待远端 CI 验证，L5 部署尚未执行。
+- 本机完整验收使用 Fake/确定性测试和 Testcontainers PostgreSQL，不访问真实模型或密钥。PR 验证、分支候选镜像发布和 L5 候选部署验收均已通过；L5 候选版不是 `main` 正式镜像，PR 仍等待审批。
 
 ## 10. 适用背景与参考资料
 
