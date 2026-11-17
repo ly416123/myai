@@ -5,6 +5,7 @@ import com.example.agent.collaboration.ChildTaskRecord;
 import com.example.agent.collaboration.PlannedTask;
 import com.example.agent.collaboration.TaskPlan;
 import com.example.agent.collaboration.TaskStatus;
+import com.example.agent.collaboration.WorkerContractIssue;
 import com.example.agent.model.Message;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
@@ -132,11 +133,13 @@ class PostgresRunStoreTest {
     void childTaskCheckpointSurvivesAStaleParentCheckpointWrite() {
         Instant now = Instant.now();
         PlannedTask planned = new PlannedTask("isolated-task", "writer", "write a result", java.util.List.of(),
-                java.util.List.of("result"));
+                java.util.List.of("result"), java.util.List.of(), java.util.List.of("produce JSON result"), "v7");
         RunRecord parent = RunRecord.create("pg-child-checkpoint-isolation", "parent request",
                 Duration.ofMinutes(2), RunType.COLLABORATIVE);
         parent.setTaskPlan(new TaskPlan(TaskPlan.Route.DELEGATE, java.util.List.of(planned), java.util.List.of()));
-        parent.addChildTask(ChildTaskRecord.pending(planned));
+        parent.addChildTask(ChildTaskRecord.pending(planned).withResolvedInput(
+                new ObjectMapper().createObjectNode().put("subject", "contract-test")));
+        parent.setWorkerContractIssues(java.util.List.of(new WorkerContractIssue("subject", "PARENT_REQUEST", "TEST_MARKER")));
         parent.transitionTo(RunStatus.RUNNING, now, null);
         store.save(parent);
 
@@ -158,6 +161,11 @@ class PostgresRunStoreTest {
         ChildTaskRecord reloadedTask = reloaded.childTasks().getFirst();
         assertEquals(TaskStatus.IN_PROGRESS, reloadedTask.status());
         assertEquals("task-local-message", reloadedTask.messages().getFirst().content());
+        assertEquals("v7", reloadedTask.workerVersion());
+        assertEquals("contract-test", reloadedTask.resolvedInput().path("subject").asText());
+        assertEquals("v7", reloaded.taskPlan().tasks().getFirst().workerVersion());
+        assertEquals(List.of("produce JSON result"), reloaded.taskPlan().tasks().getFirst().acceptanceCriteria());
+        assertEquals("TEST_MARKER", reloaded.workerContractIssues().getFirst().reasonCode());
         assertEquals("supervisor checkpoint advanced", reloaded.messages().getLast().content());
         assertTrue(reloaded.steps().stream().anyMatch(step -> step.stepId().equals("worker-step-isolated")));
         assertEquals(java.util.List.of("worker-step-isolated"), reloadedTask.steps().stream()

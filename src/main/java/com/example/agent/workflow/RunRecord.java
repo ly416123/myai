@@ -2,6 +2,7 @@ package com.example.agent.workflow;
 
 import com.example.agent.model.Message;
 import com.example.agent.collaboration.ChildTaskRecord;
+import com.example.agent.collaboration.WorkerContractIssue;
 import com.example.agent.collaboration.TaskPlan;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
@@ -26,6 +27,7 @@ public final class RunRecord {
     private List<RunStep> steps = new ArrayList<>();
     private TaskPlan taskPlan;
     private List<ChildTaskRecord> childTasks = new ArrayList<>();
+    private List<WorkerContractIssue> workerContractIssues = new ArrayList<>();
     private List<RunStateChange> stateChanges = new ArrayList<>();
     private Instant createdAt;
     private Instant updatedAt;
@@ -44,6 +46,7 @@ public final class RunRecord {
     private Long promptTokens;
     private Long completionTokens;
     private boolean tokenUsageKnown = true;
+    private Long planningInputUtf8Bytes;
 
     /** Jackson 反序列化构造器。 */
     public RunRecord() { }
@@ -72,6 +75,21 @@ public final class RunRecord {
     public synchronized void addStep(RunStep step) { steps.add(step); }
     public synchronized void setTaskPlan(TaskPlan value) { taskPlan = value; }
     public synchronized void addChildTask(ChildTaskRecord task) { childTasks.add(task); }
+    public synchronized void setWorkerContractIssues(List<WorkerContractIssue> issues) {
+        workerContractIssues = issues == null ? new ArrayList<>() : new ArrayList<>(issues);
+    }
+    public synchronized void addWorkerContractIssue(WorkerContractIssue issue) {
+        if (workerContractIssues == null) workerContractIssues = new ArrayList<>();
+        workerContractIssues.add(issue);
+    }
+    public synchronized void addWorkerContractIssues(List<WorkerContractIssue> issues) {
+        if (workerContractIssues == null) workerContractIssues = new ArrayList<>();
+        if (issues != null) workerContractIssues.addAll(issues);
+    }
+    public synchronized List<WorkerContractIssue> workerContractIssues() {
+        return workerContractIssues == null ? List.of() : List.copyOf(workerContractIssues);
+    }
+    public synchronized List<WorkerContractIssue> getWorkerContractIssues() { return workerContractIssues(); }
     public synchronized void setChildTasks(List<ChildTaskRecord> tasks) {
         childTasks = tasks == null ? new ArrayList<>() : new ArrayList<>(tasks);
         rebuildStepProjection();
@@ -151,6 +169,10 @@ public final class RunRecord {
         promptTokens = null;
         completionTokens = null;
     }
+    public synchronized void setPlanningInputUtf8Bytes(Long value) {
+        if (value != null && value < 0) throw new IllegalArgumentException("Planning input byte count cannot be negative");
+        planningInputUtf8Bytes = value;
+    }
     public synchronized void touch(Instant now) { updatedAt = now; }
 
     public synchronized String runId() { return runId; }
@@ -174,6 +196,7 @@ public final class RunRecord {
     public synchronized Long promptTokens() { return promptTokens; }
     public synchronized Long completionTokens() { return completionTokens; }
     public synchronized boolean tokenUsageKnown() { return tokenUsageKnown; }
+    public synchronized Long planningInputUtf8Bytes() { return planningInputUtf8Bytes; }
     public synchronized long totalDurationMillis() {
         if (createdAt == null || updatedAt == null) return 0;
         return Math.max(0, Duration.between(createdAt, updatedAt).toMillis());
@@ -229,5 +252,6 @@ public final class RunRecord {
     public synchronized String getFinalAnswer() { return finalAnswer; }
     public synchronized Long getPromptTokens() { return promptTokens; }
     public synchronized Long getCompletionTokens() { return completionTokens; }
+    public synchronized Long getPlanningInputUtf8Bytes() { return planningInputUtf8Bytes; }
     public synchronized boolean isTokenUsageKnown() { return tokenUsageKnown; }
 }

@@ -3,6 +3,7 @@ package com.example.agent.collaboration;
 import com.example.agent.model.Message;
 import com.example.agent.workflow.FailureCategory;
 import com.example.agent.workflow.RunStep;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -15,14 +16,29 @@ public record ChildTaskRecord(String taskId, String workerId, String description
                               TaskStatus status, Instant startedAt, Instant completedAt,
                               long durationMillis, FailureCategory failureCategory,
                               String result, List<Message> messages, int modelCalls, int toolCalls,
-                              List<RunStep> steps, Map<String, String> traceContext) {
+                              List<RunStep> steps, Map<String, String> traceContext,
+                              String workerVersion, JsonNode resolvedInput) {
     public ChildTaskRecord {
         dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
         deliverableIds = deliverableIds == null ? List.of() : List.copyOf(deliverableIds);
         messages = messages == null ? List.of() : List.copyOf(messages);
         steps = steps == null ? List.of() : List.copyOf(steps);
         traceContext = traceContext == null ? Map.of() : Map.copyOf(traceContext);
+        resolvedInput = resolvedInput == null ? null : resolvedInput.deepCopy();
     }
+
+    /** Backward constructor for checkpoints created before Worker contracts were introduced. */
+    public ChildTaskRecord(String taskId, String workerId, String description, List<String> dependencies,
+                           List<String> deliverableIds, TaskStatus status, Instant startedAt, Instant completedAt,
+                           long durationMillis, FailureCategory failureCategory, String result,
+                           List<Message> messages, int modelCalls, int toolCalls, List<RunStep> steps,
+                           Map<String, String> traceContext) {
+        this(taskId, workerId, description, dependencies, deliverableIds, status, startedAt, completedAt,
+                durationMillis, failureCategory, result, messages, modelCalls, toolCalls, steps, traceContext,
+                null, null);
+    }
+
+    @Override public JsonNode resolvedInput() { return resolvedInput == null ? null : resolvedInput.deepCopy(); }
 
     public static ChildTaskRecord pending(PlannedTask task) {
         return pending(task, Map.of());
@@ -31,48 +47,61 @@ public record ChildTaskRecord(String taskId, String workerId, String description
     public static ChildTaskRecord pending(PlannedTask task, Map<String, String> traceContext) {
         return new ChildTaskRecord(task.taskId(), task.workerId(), task.description(), task.dependencies(),
                 task.deliverableIds(), TaskStatus.PENDING, null, null, 0, null, null, List.of(), 0, 0, List.of(),
-                traceContext);
+                traceContext, task.workerVersion(), null);
+    }
+
+    public ChildTaskRecord withResolvedInput(JsonNode value) {
+        return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds, status, startedAt,
+                completedAt, durationMillis, failureCategory, result, messages, modelCalls, toolCalls, steps,
+                traceContext, workerVersion, value);
+    }
+
+    public ChildTaskRecord withWorkerVersion(String value) {
+        return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds, status, startedAt,
+                completedAt, durationMillis, failureCategory, result, messages, modelCalls, toolCalls, steps,
+                traceContext, value, resolvedInput);
     }
 
     public ChildTaskRecord start(List<Message> initialMessages, Instant now) {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 TaskStatus.IN_PROGRESS, now, null, 0, null, result, initialMessages, modelCalls, toolCalls, steps,
-                traceContext);
+                traceContext, workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord withMessages(List<Message> value) {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 status, startedAt, completedAt, durationMillis, failureCategory, result, value, modelCalls, toolCalls,
-                steps, traceContext);
+                steps, traceContext, workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord withSteps(List<RunStep> value) {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 status, startedAt, completedAt, durationMillis, failureCategory, result, messages, modelCalls, toolCalls,
-                value, traceContext);
+                value, traceContext, workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord withTraceContext(Map<String, String> value) {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds, status, startedAt,
-                completedAt, durationMillis, failureCategory, result, messages, modelCalls, toolCalls, steps, value);
+                completedAt, durationMillis, failureCategory, result, messages, modelCalls, toolCalls, steps, value,
+                workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord finish(TaskStatus finalStatus, String value, FailureCategory category, Instant now) {
         long elapsed = startedAt == null ? 0 : Math.max(0, Duration.between(startedAt, now).toMillis());
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 finalStatus, startedAt, now, elapsed, category, value, messages, modelCalls, toolCalls, steps,
-                traceContext);
+                traceContext, workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord addModelCall() {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 status, startedAt, completedAt, durationMillis, failureCategory, result, messages,
-                modelCalls + 1, toolCalls, steps, traceContext);
+                modelCalls + 1, toolCalls, steps, traceContext, workerVersion, resolvedInput);
     }
 
     public ChildTaskRecord addToolCalls(int count) {
         return new ChildTaskRecord(taskId, workerId, description, dependencies, deliverableIds,
                 status, startedAt, completedAt, durationMillis, failureCategory, result, messages,
-                modelCalls, toolCalls + count, steps, traceContext);
+                modelCalls, toolCalls + count, steps, traceContext, workerVersion, resolvedInput);
     }
 }
