@@ -192,7 +192,45 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 
 ## 7. Agent 配置发布（阶段六）
 
-阶段六配置发布能力已通过本机范围验收，分支 GitHub Actions `verify` 也已通过，但**尚未发布镜像或部署到 L5**。部署版本与数据库迁移核对完成前，不要在 L5 执行阶段六配置写入或激活命令。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准；配置记录、评测门禁、审批和激活事件均写入 PostgreSQL。
+阶段六配置发布能力已通过本机范围验收。功能分支 push 在 GitHub Actions `verify` 成功后发布 `candidate-<commit SHA>-<run ID>-<attempt>` GHCR 镜像；默认分支仍发布正式 `<commit SHA>` 标签。PR 事件只验证、不发布。候选镜像可用于 L5 受控验收，不代表已合入或正式发布；部署前仍须核对同一提交的 `verify` 和 `publish-images` 均成功，并重新检查 L5 资源与数据库迁移影响。阶段六迁移 V8–V12 为新增配置存储/审计表及可空关联字段；迁移通过 Flyway 随 Worker 启动执行，当前没有 PostgreSQL 备份/恢复能力。不要把应用回滚视作数据库回滚；迁移后旧版本是否可启动需单独验证，失败时优先保留现场并前向修复。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准。
+
+### 使用已验证分支构建部署 L5 候选 Worker
+
+先在 GitHub Actions 确认目标分支同一个完整 commit SHA 的 `verify` 与 `publish-images` 均成功。PR 的 `verify` 通过本身不代表候选镜像已发布。候选只供受控 L5 集成验证；`main` 审批、CI 和正式发布规则不变。
+
+在本机设置要部署的 40 位提交 SHA，并从 Actions 的 `publish-images` 作业摘要复制完整候选标签（包含 run ID 与 attempt，避免重跑覆盖标签）。确认 GHCR 中候选镜像的 `org.opencontainers.image.revision` 与 SHA 一致，并下载 amd64 版本：
+
+```bash
+SHA=REPLACE_WITH_40_CHAR_COMMIT_SHA
+TAG=REPLACE_WITH_FULL_TAG_FROM_ACTIONS_SUMMARY
+IMAGE="ghcr.io/ly416123/myai-agent:${TAG}"
+docker buildx imagetools inspect "$IMAGE"
+docker pull --platform=linux/amd64 "$IMAGE"
+test "$(docker image inspect "$IMAGE" --format='{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
+ARCHIVE="/tmp/myai-agent-candidate-${SHA}.tar"
+docker save --platform=linux/amd64 --output "$ARCHIVE" "$IMAGE"
+scp "$ARCHIVE" "ly@192.168.122.55:/tmp/"
+ssh ly@192.168.122.55 "sudo k3s ctr -n k8s.io images import /tmp/myai-agent-candidate-${SHA}.tar && sudo rm -f /tmp/myai-agent-candidate-${SHA}.tar"
+rm -f "$ARCHIVE"
+```
+
+导入前后都不输出或传输密钥。部署前按本手册第 1 节重新检查 L5 Node、MyAI Pods、PVC 和 events，并通过 `ssh ly@192.168.122.55 'df -h /'` 检查节点根卷；候选镜像只更改 MyAI Worker，不修改其他命名空间。确认 Node Ready、当前 Worker 2/2 Ready、相关 PVC Bound 且资源余量满足后，执行受控滚动：
+
+```bash
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/l5-k3s.yaml}"
+CTX=l5
+NS=myai
+SHA=REPLACE_WITH_40_CHAR_COMMIT_SHA
+TAG=REPLACE_WITH_FULL_TAG_FROM_ACTIONS_SUMMARY
+IMAGE="ghcr.io/ly416123/myai-agent:${TAG}"
+kubectl --context "$CTX" -n "$NS" set image deploy/myai-agent-worker "agent-worker=$IMAGE"
+kubectl --context "$CTX" -n "$NS" rollout status deploy/myai-agent-worker --timeout=180s
+kubectl --context "$CTX" -n "$NS" get deploy,pods -o wide
+kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent-worker")].image}{"\n"}'
+kubectl --context "$CTX" -n "$NS" exec myai-postgres-0 -- psql -U myai -d myai -Atc "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1;"
+```
+
+确认 2 个 Worker Ready、Deployment 镜像与候选 SHA 相符，再按数据库只读检查确认 Flyway 已迁移至 V12。若新 Pod 未 Ready，不要提交新 Run，也不要删除旧 ReplicaSet 或 PVC；记录事件和安全日志并优先前向修复。由于当前 Flyway 版本历史与数据库状态可能阻止旧镜像重新启动，不得在未验证兼容性的情况下直接回滚旧应用镜像。候选验收完成并合入 `main` 后，正式 SHA 镜像由默认分支工作流发布；再将 L5 切换到正式镜像并核对运行摘要。若 PR 尚未满足审批，L5 可以继续使用已验收候选镜像，不需要为等待审批而回退。
 
 建议按以下顺序操作：创建不可变 Revision，运行关联的离线评测并查看门禁结果；只有门禁通过才会生成 Release；由操作者显式记录审批后，才可激活或灰度；使用 `current`、`history`、`run <runId>` 和 `gate-attempts` 复核变更及 Run 快照。激活和回滚使用数据库版本 CAS；并发冲突时命令应失败，由操作者重新读取当前状态后再决定，不要直接改数据库表。配置差异输出经过字段过滤，但发布前仍需人工复核 Prompt、Skill 和参数内容。
 

@@ -79,7 +79,7 @@ jobs:
           exit-code: '1'
 
   publish-images:
-    if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -99,27 +99,35 @@ jobs:
       - name: Prepare image names
         id: images
         shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "runtime=ghcr.io/${owner}/myai-agent" >> "$GITHUB_OUTPUT"
           echo "proxy=ghcr.io/${owner}/myai-model-egress-proxy" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]]; then
+            image_tag="$GITHUB_SHA"
+          else
+            image_tag="candidate-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          echo "tag=$image_tag" >> "$GITHUB_OUTPUT"
       - name: Build runtime image
         run: >-
           docker build
           --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
           --label "org.opencontainers.image.revision=${GITHUB_SHA}"
-          --tag "${{ steps.images.outputs.runtime }}:${GITHUB_SHA}" .
+          --tag "${{ steps.images.outputs.runtime }}:${{ steps.images.outputs.tag }}" .
       - name: Build model egress proxy image
         run: >-
           docker build --file ops/egress-proxy.Dockerfile
           --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
           --label "org.opencontainers.image.revision=${GITHUB_SHA}"
-          --tag "${{ steps.images.outputs.proxy }}:${GITHUB_SHA}" .
+          --tag "${{ steps.images.outputs.proxy }}:${{ steps.images.outputs.tag }}" .
       - name: Scan runtime image for HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ steps.images.outputs.runtime }}:${{ github.sha }}
+          image-ref: ${{ steps.images.outputs.runtime }}:${{ steps.images.outputs.tag }}
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -128,7 +136,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ steps.images.outputs.proxy }}:${{ github.sha }}
+          image-ref: ${{ steps.images.outputs.proxy }}:${{ steps.images.outputs.tag }}
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -142,6 +150,13 @@ jobs:
         env:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
           PROXY_IMAGE: ${{ steps.images.outputs.proxy }}
+          IMAGE_TAG: ${{ steps.images.outputs.tag }}
         run: |
-          docker push "$RUNTIME_IMAGE:$GITHUB_SHA"
-          docker push "$PROXY_IMAGE:$GITHUB_SHA"
+          docker push "$RUNTIME_IMAGE:$IMAGE_TAG"
+          docker push "$PROXY_IMAGE:$IMAGE_TAG"
+          {
+            echo "### Published images"
+            echo "- Runtime: `$RUNTIME_IMAGE:$IMAGE_TAG`"
+            echo "- Proxy: `$PROXY_IMAGE:$IMAGE_TAG`"
+            echo "- Source commit: `$GITHUB_SHA`"
+          } >> "$GITHUB_STEP_SUMMARY"
