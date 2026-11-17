@@ -5,6 +5,7 @@ import com.example.agent.workflow.RunRecord;
 import com.example.agent.workflow.RunStore;
 import com.example.agent.workflow.RunType;
 import com.example.agent.configuration.ActiveConfigurationProvider;
+import com.example.agent.memory.MemoryContextProvider;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -17,19 +18,27 @@ public final class RunSubmissionService {
     private final ActiveConfigurationProvider configurationProvider;
     private final String environment;
     private final String agentId;
+    private final MemoryContextProvider memoryContextProvider;
 
     public RunSubmissionService(RunStore store, Duration taskTimeout) {
         this(store, taskTimeout, RunSubmissionPolicy.noAuthentication());
     }
 
     public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy) {
-        this(store, taskTimeout, submissionPolicy, null, null, null);
+        this(store, taskTimeout, submissionPolicy, null, null, null, MemoryContextProvider.empty());
     }
 
     public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy,
                                 ActiveConfigurationProvider configurationProvider, String environment, String agentId) {
+        this(store, taskTimeout, submissionPolicy, configurationProvider, environment, agentId,
+                MemoryContextProvider.empty());
+    }
+
+    public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy,
+                                ActiveConfigurationProvider configurationProvider, String environment, String agentId,
+                                MemoryContextProvider memoryContextProvider) {
         if (store == null || taskTimeout == null || taskTimeout.isZero() || taskTimeout.isNegative()
-                || submissionPolicy == null || (configurationProvider != null
+                || submissionPolicy == null || memoryContextProvider == null || (configurationProvider != null
                 && (environment == null || environment.isBlank() || agentId == null || agentId.isBlank()))) {
             throw new IllegalArgumentException("Invalid Run submission configuration");
         }
@@ -39,6 +48,7 @@ public final class RunSubmissionService {
         this.configurationProvider = configurationProvider;
         this.environment = environment;
         this.agentId = agentId;
+        this.memoryContextProvider = memoryContextProvider;
     }
 
     public RunRecord submitSingle(String input) {
@@ -66,6 +76,7 @@ public final class RunSubmissionService {
         if (configurationProvider != null) {
             run.setConfigurationSnapshot(configurationProvider.resolve(environment, agentId, run.runId()));
         }
+        run.setMemoryContextSnapshot(memoryContextProvider.snapshot(normalized));
         run.addMessage(Message.user(normalized));
         store.save(run);
         return run;

@@ -224,7 +224,7 @@ git commit -m "feat(记忆): 实现显式记忆管理策略（任务3）"
 - 测试：`src/test/java/com/example/agent/runtime/AgentRuntimeTest.java`
 - 测试：`src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java`
 
-- [ ] **步骤 1：先写 Run JSON 往返与各入口快照固定测试**
+- [x] **步骤 1：先写 Run JSON 往返与各入口快照固定测试**
 
 ```java
 @Test
@@ -243,21 +243,30 @@ void queuedRunPinsMemoryBeforeFirstStoreWriteAndResumeDoesNotResolveAgain() {
 }
 ```
 
-- [ ] **步骤 2：运行测试确认 Run 快照字段尚不存在**
+- [x] **步骤 2：运行测试确认 Run 快照字段尚不存在**
 
 运行：`mvn -Dtest=RunRecordTest,RunSubmissionServiceTest,AgentRuntimeTest,CollaborativeWorkflowTest test`
 
 预期：编译失败，缺少快照属性/Provider 注入构造器。
 
-- [ ] **步骤 3：加可空 Run 快照并在首次保存前解析**
+- [x] **步骤 3：加可空 Run 快照并在首次保存前解析**
 
 `RunRecord` 添加 `MemoryContextSnapshot memoryContextSnapshot` 与 Jackson getter/setter。单 Agent、协作、队列入口都在首次 `save` 前调用 provider 并固定快照；provider 为空时创建空的 `policy-v1` 快照。老 JSON 缺少字段时保持 null，恢复代码将其解释为空快照但绝不调用 provider。保留旧构造器供现有调用和单测兼容。
 
-- [ ] **步骤 4：运行 Run 快照测试确认通过**
+- [x] **步骤 4：运行 Run 快照测试确认通过**
 
 运行：`mvn -Dtest=RunRecordTest,RunSubmissionServiceTest,AgentRuntimeTest,CollaborativeWorkflowTest test`
 
 预期：创建入口一次解析、RunStore 往返保留版本/正文、恢复不再解析、旧 checkpoint 不注入新记忆的测试通过。
+
+实际结果：`DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn -Dtest=RunRecordTest,RunSubmissionMemorySnapshotTest,AgentRuntimeTest,CollaborativeWorkflowTest test` 通过，43 项测试，0 失败/错误/跳过。协作测试验证 Supervisor 可以获得父 Run 快照，而 Worker prompt 不包含记忆正文。
+
+- [x] **步骤 5：提交任务 4**
+
+```bash
+git add src/main/java/com/example/agent/workflow/RunRecord.java src/main/java/com/example/agent/runtime/AgentRuntime.java src/main/java/com/example/agent/collaboration/CollaborativeWorkflow.java src/main/java/com/example/agent/app/RunSubmissionService.java src/test/java/com/example/agent/workflow/RunRecordTest.java src/test/java/com/example/agent/app/RunSubmissionMemorySnapshotTest.java src/test/java/com/example/agent/runtime/AgentRuntimeTest.java src/test/java/com/example/agent/collaboration/CollaborativeWorkflowTest.java
+git commit -m "feat(记忆): 将上下文快照固定到 Run（任务4）"
+```
 
 - [ ] **步骤 5：提交任务 4**
 

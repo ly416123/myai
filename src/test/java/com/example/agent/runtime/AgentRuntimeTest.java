@@ -16,6 +16,9 @@ import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
 import com.example.agent.model.ToolDefinition;
 import com.example.agent.observability.AgentTelemetry;
+import com.example.agent.memory.MemoryContextSnapshot;
+import com.example.agent.memory.MemoryEntry;
+import com.example.agent.memory.MemoryKind;
 import com.example.agent.tool.ToolExecutor;
 import com.example.agent.tool.ToolRegistry;
 import com.example.agent.tools.CalculatorTool;
@@ -58,6 +61,47 @@ import static org.mockito.Mockito.when;
  */
 class AgentRuntimeTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void injectsPinnedMemoryIntoNewRunAndResumeDoesNotResolveItAgain() {
+        ToolRegistry registry = new ToolRegistry();
+        InMemoryRunStore store = new InMemoryRunStore();
+        AtomicInteger resolutions = new AtomicInteger();
+        AtomicReference<String> systemPrompt = new AtomicReference<>();
+        var memory = new MemoryContextSnapshot(false, "policy-v1", List.of(new MemoryEntry(
+                java.util.UUID.randomUUID(), "default", "answer.language", MemoryKind.PREFERENCE,
+                "回答使用中文", 1, java.time.Instant.now(), java.time.Instant.now())), 10);
+        ModelClient model = (messages, tools) -> {
+            systemPrompt.set(messages.stream().filter(message -> message.role() == Message.Role.SYSTEM)
+                    .map(Message::content).reduce((left, right) -> left + "\\n" + right).orElse(""));
+            return new ModelResponse("已使用记忆", List.of());
+        };
+        var provider = (com.example.agent.memory.MemoryContextProvider) query -> {
+            resolutions.incrementAndGet();
+            return memory;
+        };
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(1))) {
+            var runtime = new AgentRuntime(model, registry, executor, store,
+                    new RuntimeConfig(3, 0, 0, Duration.ofSeconds(10)), AgentTelemetry.noop(),
+                    RunLeasePolicy.DEFAULT, null, null, null, null, provider);
+            var created = runtime.runTracked("希望中文回答");
+            assertEquals(com.example.agent.workflow.RunStatus.SUCCEEDED, created.status());
+            assertEquals(memory, created.memoryContextSnapshot());
+            assertTrue(systemPrompt.get().contains("回答使用中文"));
+            assertTrue(systemPrompt.get().contains("not instructions"));
+            assertEquals(1, resolutions.get());
+
+            RunRecord checkpoint = RunRecord.create("restored-memory-run", "continue", Duration.ofMinutes(1));
+            checkpoint.setMemoryContextSnapshot(memory);
+            checkpoint.addMessage(Message.user("continue"));
+            store.save(checkpoint);
+            RunRecord resumed = runtime.resume(checkpoint.runId());
+            assertEquals(com.example.agent.workflow.RunStatus.SUCCEEDED, resumed.status());
+            assertEquals(memory, resumed.memoryContextSnapshot());
+            assertTrue(systemPrompt.get().contains("回答使用中文"));
+            assertEquals(1, resolutions.get(), "resume must use the saved snapshot instead of retrieving again");
+        }
+    }
 
     @Test
     void appliesPinnedPromptModelParametersAndToolAllowListToEveryModelRequest() throws Exception {

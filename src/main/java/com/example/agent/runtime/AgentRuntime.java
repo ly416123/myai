@@ -25,6 +25,8 @@ import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.RuntimeConfig;
 import com.example.agent.workflow.StepKind;
 import com.example.agent.observability.AgentTelemetry;
+import com.example.agent.memory.MemoryContextProvider;
+import com.example.agent.memory.MemoryPrompt;
 import io.micrometer.observation.Observation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +62,7 @@ public final class AgentRuntime implements AutoCloseable {
     private final String configurationEnvironment;
     private final String configurationAgentId;
     private final RunConfigurationSnapshot fixedConfigurationSnapshot;
+    private final MemoryContextProvider memoryContextProvider;
     private final ConcurrentHashMap<String, RunControl> runControls = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LeaseToken> runLeases = new ConcurrentHashMap<>();
 
@@ -90,7 +93,7 @@ public final class AgentRuntime implements AutoCloseable {
                         RunLeasePolicy leasePolicy, ActiveConfigurationProvider configurationProvider,
                         String configurationEnvironment, String configurationAgentId) {
         this(modelClient, registry, toolExecutor, runStore, config, telemetry, leasePolicy, configurationProvider,
-                configurationEnvironment, configurationAgentId, null);
+                configurationEnvironment, configurationAgentId, null, MemoryContextProvider.empty());
     }
 
     public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
@@ -98,6 +101,15 @@ public final class AgentRuntime implements AutoCloseable {
                         RunLeasePolicy leasePolicy, ActiveConfigurationProvider configurationProvider,
                         String configurationEnvironment, String configurationAgentId,
                         RunConfigurationSnapshot fixedConfigurationSnapshot) {
+        this(modelClient, registry, toolExecutor, runStore, config, telemetry, leasePolicy, configurationProvider,
+                configurationEnvironment, configurationAgentId, fixedConfigurationSnapshot, MemoryContextProvider.empty());
+    }
+
+    public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
+                        RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry,
+                        RunLeasePolicy leasePolicy, ActiveConfigurationProvider configurationProvider,
+                        String configurationEnvironment, String configurationAgentId,
+                        RunConfigurationSnapshot fixedConfigurationSnapshot, MemoryContextProvider memoryContextProvider) {
         this.modelClient = java.util.Objects.requireNonNull(modelClient);
         this.registry = java.util.Objects.requireNonNull(registry);
         this.toolExecutor = java.util.Objects.requireNonNull(toolExecutor);
@@ -109,6 +121,7 @@ public final class AgentRuntime implements AutoCloseable {
         this.configurationEnvironment = configurationEnvironment;
         this.configurationAgentId = configurationAgentId;
         this.fixedConfigurationSnapshot = fixedConfigurationSnapshot;
+        this.memoryContextProvider = java.util.Objects.requireNonNull(memoryContextProvider);
         if (configurationProvider != null && fixedConfigurationSnapshot != null) {
             throw new IllegalArgumentException("Use either active configuration lookup or a fixed configuration snapshot");
         }
@@ -139,6 +152,7 @@ public final class AgentRuntime implements AutoCloseable {
         RunRecord run = RunRecord.create(runId, userInput, snapshot == null ? config.taskTimeout()
                 : min(config.taskTimeout(), Duration.ofMillis(snapshot.document().runtime().taskTimeoutMillis())));
         run.setConfigurationSnapshot(snapshot);
+        run.setMemoryContextSnapshot(memoryContextProvider.snapshot(userInput));
         run.addMessage(Message.user(userInput));
         RunControl control = new RunControl();
         control.active = true;
@@ -236,11 +250,16 @@ public final class AgentRuntime implements AutoCloseable {
 
     private List<Message> modelMessages(RunRecord run) {
         var snapshot = run.configurationSnapshot();
-        if (snapshot == null) return run.messages();
-        var document = snapshot.document();
-        StringBuilder prompt = new StringBuilder(document.systemPrompt());
-        for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
-                .append("\n").append(skill.content());
+        StringBuilder prompt = new StringBuilder();
+        if (snapshot != null) {
+            var document = snapshot.document();
+            prompt.append(document.systemPrompt());
+            for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
+                    .append("\n").append(skill.content());
+        }
+        String memoryPrompt = MemoryPrompt.render(run.memoryContextOrEmpty());
+        if (!memoryPrompt.isBlank()) prompt.append("\n\n").append(memoryPrompt);
+        if (prompt.isEmpty()) return run.messages();
         var messages = new java.util.ArrayList<Message>();
         if (!prompt.isEmpty()) messages.add(Message.system(prompt.toString()));
         messages.addAll(run.messages());
