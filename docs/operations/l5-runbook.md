@@ -192,7 +192,7 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
 
 ## 7. Agent 配置发布（阶段六）
 
-阶段六配置发布能力已在本机完成范围验收，但**尚未部署到 L5**。部署版本与数据库迁移核对完成前，不要在 L5 执行阶段六配置写入或激活命令。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准；配置记录、评测门禁、审批和激活事件均写入 PostgreSQL。
+阶段六配置发布能力已通过本机范围验收，分支 GitHub Actions `verify` 也已通过，但**尚未发布镜像或部署到 L5**。部署版本与数据库迁移核对完成前，不要在 L5 执行阶段六配置写入或激活命令。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准；配置记录、评测门禁、审批和激活事件均写入 PostgreSQL。
 
 建议按以下顺序操作：创建不可变 Revision，运行关联的离线评测并查看门禁结果；只有门禁通过才会生成 Release；由操作者显式记录审批后，才可激活或灰度；使用 `current`、`history`、`run <runId>` 和 `gate-attempts` 复核变更及 Run 快照。激活和回滚使用数据库版本 CAS；并发冲突时命令应失败，由操作者重新读取当前状态后再决定，不要直接改数据库表。配置差异输出经过字段过滤，但发布前仍需人工复核 Prompt、Skill 和参数内容。
 

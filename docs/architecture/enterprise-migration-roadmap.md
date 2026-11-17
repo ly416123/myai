@@ -148,7 +148,7 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 
 ### 阶段六：Agent 配置版本、发布与运行时切换（2026-11-17，本机功能验收通过）
 
-需求与范围见[阶段六需求](../plans/phase-06-requirements.md)，验收证据见[阶段六总结](../stages/phase-06-summary.html)。本机 `mvn --batch-mode --no-transfer-progress clean verify` 通过：257 项测试，0 失败、0 错误、0 跳过；Testcontainers PostgreSQL 实际执行迁移至 V12，并验证配置切换和 Run 快照固定。已实现 PostgreSQL 不可变 Revision/Release、离线 Evaluation 门禁与追加式门禁尝试审计、独立审批记录、激活 CAS/灰度/手工回滚、每个 Run 固定配置快照、运行时配置应用、配置历史与脱敏差异 CLI，以及可选自动回滚。GitHub Actions、镜像发布和 L5 部署尚未对阶段六变更执行，因此只确认本机范围内验收通过。
+需求与范围见[阶段六需求](../plans/phase-06-requirements.md)，验收证据见[阶段六总结](../stages/phase-06-summary.html)。本机 `mvn --batch-mode --no-transfer-progress clean verify` 通过：257 项测试，0 失败、0 错误、0 跳过；Testcontainers PostgreSQL 实际执行迁移至 V12，并验证配置切换和 Run 快照固定。已实现 PostgreSQL 不可变 Revision/Release、离线 Evaluation 门禁与追加式门禁尝试审计、独立审批记录、激活 CAS/灰度/手工回滚、每个 Run 固定配置快照、运行时配置应用、配置历史与脱敏差异 CLI，以及可选自动回滚。阶段六分支提交 `5de8b6f` 的 GitHub Actions `verify` 已通过；`publish-images` 仅在默认分支执行，尚未发布镜像；L5 部署仍未执行。
 
 自动回滚默认关闭，按环境与 Agent 配置启用；固定延迟检查使用有界最近 Run 页，样本不足、扫描页饱和、冷却期或数据异常时不执行决策。只统计候选版本窗口内 SUCCEEDED/PARTIAL/FAILED Run，取消/未完成任务排除；达阈值后通过 Assignment 版本 CAS 移除候选并追加事件。灰度只按稳定 Run ID 分桶，不声称用户级粘性。配置引用与哈希不一致或静态工具/Worker 版本缺失时拒绝创建新 Run；已有 Run 与恢复使用其检查点快照。
 
