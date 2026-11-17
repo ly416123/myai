@@ -154,6 +154,20 @@ class PostgresEvaluationRepositoryTest {
         assertEquals(2, saved.run().aggregate().totalCases());
     }
 
+    @Test
+    void persistsConfigurationHashWithEvaluationMetadata() {
+        String id = UUID.randomUUID().toString();
+        String configHash = "c".repeat(64);
+        Instant now = Instant.now();
+        var run = EvaluationRunRecord.created(id, new EvaluationDatasetIdentity("agent-runtime", "v1",
+                "a".repeat(64), 1), "git-sha", "single", "fake", "test-model", configHash,
+                EvaluationEvaluatorRegistry.defaults().versions(), 8, 4, 5, now, now.plusSeconds(60));
+
+        repository.create(run, List.of("case-a"));
+
+        assertEquals(configHash, repository.find(id).orElseThrow().run().configurationHash());
+    }
+
     private static EvaluationRunRecord run(String id, Instant now) {
         var dataset = new EvaluationDatasetIdentity("agent-runtime", "v1", "a".repeat(64), 1);
         return EvaluationRunRecord.created(id, dataset, "git-sha", "single", "fake", "test-model",

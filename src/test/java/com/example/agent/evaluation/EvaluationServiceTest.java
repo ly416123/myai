@@ -22,6 +22,27 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvaluationServiceTest {
+    @Test void associatesFakeEvaluationWithTheConfigurationRevisionHash(@TempDir Path output) {
+        var repo = new FakeRepository();
+        var tools = new ToolRegistry();
+        String configHash = "c".repeat(64);
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner((messages, definitions) -> new ModelResponse("synthetic response", List.of(), 3L, 2L),
+                    tools, executor, new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(4),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            var service = new EvaluationService(repo, runner, EvaluationEvaluatorRegistry.defaults(), "fake-commit", AgentTelemetry.noop());
+            var dataset = new AgentEvaluationDataset("revision-v1", List.of(new AgentEvaluationScenario(
+                    "case-1", EvaluationWorkflow.SINGLE_AGENT, "synthetic prompt", List.of())));
+            var snapshot = new AgentEvaluationDatasetSnapshot("revision-dataset", 1, "a".repeat(64), dataset);
+
+            var result = service.runForConfiguration(snapshot, "fake-model", configHash,
+                    config(output), "fake", "single");
+
+            assertEquals(configHash, result.configurationHash());
+            assertEquals(configHash, repo.find(result.evaluationId()).orElseThrow().run().configurationHash());
+        }
+    }
+
     @Test void fakeModelEvaluationPersistsPerCaseAndTerminalOutcome(@TempDir Path output) {
         var repo = new FakeRepository();
         var tools = new ToolRegistry();
@@ -115,7 +136,8 @@ class EvaluationServiceTest {
         private static EvaluationRunRecord copy(EvaluationRunRecord r, EvaluationRunStatus status, Instant ended,
                                                 EvaluationAggregate aggregate) {
             return new EvaluationRunRecord(r.evaluationId(), status, r.dataset(), r.gitCommit(), r.workflowMode(),
-                    r.provider(), r.model(), r.evaluatorVersions(), r.modelCallBudget(), r.toolCallBudget(), r.maxCases(),
+                    r.provider(), r.model(), r.configurationHash(), r.evaluatorVersions(),
+                    r.modelCallBudget(), r.toolCallBudget(), r.maxCases(),
                     r.createdAt(), r.deadlineAt(), ended, aggregate, null);
         }
     }

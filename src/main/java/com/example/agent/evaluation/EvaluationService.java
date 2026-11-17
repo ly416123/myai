@@ -25,7 +25,16 @@ public final class EvaluationService {
 
     public EvaluationRunRecord run(AgentEvaluationDatasetSnapshot snapshot, String model,
                                    AgentEvaluationConfig config, String provider, String mode) {
+        return runForConfiguration(snapshot, model, null, config, provider, mode);
+    }
+
+    public EvaluationRunRecord runForConfiguration(AgentEvaluationDatasetSnapshot snapshot, String model,
+                                   String configurationHash, AgentEvaluationConfig config,
+                                   String provider, String mode) {
         if (snapshot == null) throw new IllegalArgumentException("Dataset snapshot is required");
+        if (configurationHash != null && !configurationHash.matches("[a-f0-9]{64}")) {
+            throw new IllegalArgumentException("Evaluation configuration hash is invalid");
+        }
         if (config == null || !config.enabled()) throw new IllegalStateException("Live model evaluation is disabled");
         var dataset = snapshot.dataset();
         dataset.scenarios().forEach(s -> evaluators.validate(s.evaluatorIds()));
@@ -33,7 +42,7 @@ public final class EvaluationService {
         String id = UUID.randomUUID().toString();
         var identity = new EvaluationDatasetIdentity(snapshot.datasetId(), snapshot.datasetVersion(),
                 snapshot.contentSha256(), snapshot.formatVersion());
-        var run = EvaluationRunRecord.created(id, identity, gitCommit, mode, provider, model, evaluators.versions(),
+        var run = EvaluationRunRecord.created(id, identity, gitCommit, mode, provider, model, configurationHash, evaluators.versions(),
                 config.maxModelCalls(), config.maxToolCalls(), config.maxCases(), started, started.plus(config.totalTimeout()));
         List<String> caseIds = dataset.scenarios().stream().map(AgentEvaluationScenario::id).toList();
         repository.create(run, caseIds);
