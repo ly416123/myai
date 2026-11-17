@@ -54,6 +54,18 @@ class AgentConfigRevisionTest {
                 Map.of(), "sk-real-secret"));
     }
 
+    @Test
+    void rejectsObviousCredentialsInPromptAndSkills() {
+        assertThrows(IllegalArgumentException.class, () -> new AgentConfigDocument(1,
+                "Use key=sk-1234567890abcdef", List.of(),
+                new ModelSettings("deepseek", "deepseek-flash", Map.of(), "secret://providers/deepseek"),
+                Set.of(), Map.of(), new RuntimeSettings(10, 20, 2, 300_000, 10, 8, 2)));
+        assertThrows(IllegalArgumentException.class, () -> new AgentConfigDocument(1, "Safe prompt",
+                List.of(new SkillDefinition("credential", "Bearer abcdefghijklmnop")),
+                new ModelSettings("deepseek", "deepseek-flash", Map.of(), "secret://providers/deepseek"),
+                Set.of(), Map.of(), new RuntimeSettings(10, 20, 2, 300_000, 10, 8, 2)));
+    }
+
     private static AgentConfigDocument document(Map<String, Object> parameters) {
         return new AgentConfigDocument(1, "Be concise.",
                 List.of(new SkillDefinition("travel", "Use confirmed travel facts.")),

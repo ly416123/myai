@@ -13,6 +13,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -70,6 +71,70 @@ class PostgresAgentConfigStoreTest {
                 ReleaseAction.ACTIVATE, "ci-release", "stale update", now.plusSeconds(1)));
         assertEquals(first.releaseId(), store.assignment("test", "assistant").orElseThrow().activeReleaseId());
         assertEquals(1, store.events("test", "assistant", 20).size());
+    }
+
+    @Test
+    void persistsAppendOnlyGateAttemptForRejectedCandidate() {
+        var revision = revision("Prompt rejected candidate");
+        store.saveRevision(revision, "a1b2c3d", "ci-release", Instant.now());
+        var attempt = new ConfigurationGateAttempt(0, revision.revisionId(), "eval-rejected", null,
+                MAPPER.createObjectNode().put("passed", false).put("reason", "EVALUATOR_REGRESSION"),
+                "ci-release", Instant.now());
+        store.saveGateAttempt(attempt);
+        assertTrue(store.gateAttempts(10).stream().anyMatch(saved -> saved.revisionId().equals(revision.revisionId())
+                && saved.evaluationId().equals("eval-rejected") && !saved.decision().path("passed").asBoolean()));
+        var saved = store.gateAttempts(10).stream().filter(item -> item.revisionId().equals(revision.revisionId()))
+                .findFirst().orElseThrow();
+        assertThrows(Exception.class, () -> jdbc.update("DELETE FROM agent_config_gate_attempt WHERE attempt_id = ?",
+                saved.attemptId()));
+    }
+
+    @Test
+    void approvalIsAppendOnlyAndRequiredByApplicationBeforeActivation() {
+        var revision = revision("Prompt approval record");
+        store.saveRevision(revision, "a1b2c3d", "ci-release", Instant.now());
+        var release = release("rel-approval-record", revision, null, null);
+        store.saveRelease(release);
+        var approval = new ReleaseApproval(release.releaseId(), "release-operator", "reviewed candidate", Instant.now());
+        store.approveRelease(approval);
+        assertTrue(store.isApproved(release.releaseId()));
+        assertThrows(IllegalStateException.class, () -> store.approveRelease(new ReleaseApproval(
+                release.releaseId(), "other-operator", "changed approval", Instant.now())));
+        assertThrows(Exception.class, () -> jdbc.update(
+                "DELETE FROM agent_config_release_approval WHERE release_id = ?", release.releaseId()));
+    }
+
+    @Test
+    void separateRuntimeResolversSeeNewActivationWhilePersistedRunKeepsItsOldSnapshot() {
+        String environment = "switch-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        var firstRevision = revision("Prompt before switch " + environment);
+        var secondRevision = revision("Prompt after switch " + environment);
+        store.saveRevision(firstRevision, "a1b2c3d", "ci-release", Instant.now());
+        store.saveRevision(secondRevision, "a1b2c3d", "ci-release", Instant.now());
+        var firstRelease = release("rel-before-" + environment, firstRevision, null, null);
+        var secondRelease = release("rel-after-" + environment, secondRevision, null, null);
+        store.saveRelease(firstRelease);
+        store.saveRelease(secondRelease);
+        store.approveRelease(new ReleaseApproval(firstRelease.releaseId(), "operator", "reviewed", Instant.now()));
+        store.approveRelease(new ReleaseApproval(secondRelease.releaseId(), "operator", "reviewed", Instant.now()));
+
+        assertTrue(store.assign(environment, "myai", firstRelease.releaseId(), null, 0, 0,
+                ReleaseAction.ACTIVATE, "operator", "initial", Instant.now()));
+        var runtimeOne = new ActiveConfigurationProvider(store);
+        var runtimeTwo = new ActiveConfigurationProvider(store);
+        var beforeSwitch = runtimeOne.resolve(environment, "myai", "run-before-switch");
+        var run = com.example.agent.workflow.RunRecord.create("run-before-switch", "input", Duration.ofMinutes(1));
+        run.setConfigurationSnapshot(beforeSwitch);
+        new com.example.agent.workflow.PostgresRunStore(jdbc, MAPPER).save(run);
+
+        assertTrue(store.assign(environment, "myai", secondRelease.releaseId(), null, 0, 1,
+                ReleaseAction.ACTIVATE, "operator", "activate second", Instant.now()));
+        var afterSwitch = runtimeTwo.resolve(environment, "myai", "run-after-switch");
+
+        assertEquals(firstRelease.releaseId(), beforeSwitch.releaseId());
+        assertEquals(secondRelease.releaseId(), afterSwitch.releaseId());
+        assertEquals(firstRelease.releaseId(), new com.example.agent.workflow.PostgresRunStore(jdbc, MAPPER)
+                .find("run-before-switch").orElseThrow().configurationSnapshot().releaseId());
     }
 
     @Test

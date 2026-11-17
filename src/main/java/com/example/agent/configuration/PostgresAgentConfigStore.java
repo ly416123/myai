@@ -164,6 +164,50 @@ public final class PostgresAgentConfigStore implements AgentConfigStore {
                 environment, agentId, limit);
     }
 
+    @Override
+    public void saveGateAttempt(ConfigurationGateAttempt attempt) {
+        if (attempt == null) throw new IllegalArgumentException("Gate attempt is required");
+        jdbc.update("""
+                INSERT INTO agent_config_gate_attempt(revision_id, evaluation_id, baseline_release_id,
+                  decision, actor, occurred_at)
+                VALUES (?, ?, ?, ?::jsonb, ?, ?)
+                """, attempt.revisionId(), attempt.evaluationId(), attempt.baselineReleaseId(),
+                json(attempt.decision()), attempt.actor(), timestamp(attempt.occurredAt()));
+    }
+
+    @Override
+    public List<ConfigurationGateAttempt> gateAttempts(int limit) {
+        requireLimit(limit);
+        return jdbc.query("""
+                SELECT attempt_id, revision_id, evaluation_id, baseline_release_id, decision::text AS decision,
+                       actor, occurred_at
+                FROM agent_config_gate_attempt ORDER BY attempt_id DESC LIMIT ?
+                """, (rs, row) -> new ConfigurationGateAttempt(rs.getLong("attempt_id"),
+                rs.getString("revision_id"), rs.getString("evaluation_id"), rs.getString("baseline_release_id"),
+                readTree(rs.getString("decision")), rs.getString("actor"),
+                rs.getTimestamp("occurred_at").toInstant()), limit);
+    }
+
+    @Override
+    public void approveRelease(ReleaseApproval approval) {
+        if (approval == null) throw new IllegalArgumentException("Release approval is required");
+        jdbc.update("""
+                INSERT INTO agent_config_release_approval(release_id, actor, reason, approved_at)
+                VALUES (?, ?, ?, ?) ON CONFLICT (release_id) DO NOTHING
+                """, approval.releaseId(), approval.actor(), approval.reason(), timestamp(approval.approvedAt()));
+        ReleaseApproval saved = jdbc.query("""
+                SELECT release_id, actor, reason, approved_at FROM agent_config_release_approval WHERE release_id = ?
+                """, rs -> rs.next() ? new ReleaseApproval(rs.getString("release_id"), rs.getString("actor"),
+                rs.getString("reason"), rs.getTimestamp("approved_at").toInstant()) : null, approval.releaseId());
+        if (!approval.equals(saved)) throw new IllegalStateException("Release approval is immutable");
+    }
+
+    @Override
+    public boolean isApproved(String releaseId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM agent_config_release_approval WHERE release_id = ?)",
+                Boolean.class, releaseId));
+    }
+
     private String json(Object value) {
         try { return mapper.writeValueAsString(value); }
         catch (JsonProcessingException failure) { throw new IllegalStateException("Unable to serialize config record"); }

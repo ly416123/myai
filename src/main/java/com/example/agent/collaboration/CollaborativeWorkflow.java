@@ -3,6 +3,9 @@ package com.example.agent.collaboration;
 import com.example.agent.client.ModelClient;
 import com.example.agent.client.ModelClientException;
 import com.example.agent.model.Message;
+import com.example.agent.configuration.ActiveConfigurationProvider;
+import com.example.agent.configuration.RuntimeSettings;
+import com.example.agent.client.ModelRequestOptions;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
 import com.example.agent.tool.ToolExecutor;
@@ -73,10 +76,13 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     private final RunStore store;
     private final CollaborationConfig config;
     private final ObjectMapper json;
-    private final TaskPlanValidator planValidator;
     private final WorkerContractValidator contractValidator;
     private final AgentTelemetry telemetry;
     private final RunLeasePolicy leasePolicy;
+    private final ActiveConfigurationProvider configurationProvider;
+    private final String configurationEnvironment;
+    private final String configurationAgentId;
+    private final com.example.agent.configuration.RunConfigurationSnapshot fixedConfigurationSnapshot;
     private final ConcurrentHashMap<String, Control> controls = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LeaseToken> runLeases = new ConcurrentHashMap<>();
     private final ThreadLocal<TaskLeaseToken> activeTaskLease = new ThreadLocal<>();
@@ -97,6 +103,24 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     public CollaborativeWorkflow(ModelClient model, ToolRegistry allTools, WorkerRegistry workers,
                                  RunStore store, CollaborationConfig config, ObjectMapper json,
                                  AgentTelemetry telemetry, RunLeasePolicy leasePolicy) {
+        this(model, allTools, workers, store, config, json, telemetry, leasePolicy, null, null, null);
+    }
+
+    public CollaborativeWorkflow(ModelClient model, ToolRegistry allTools, WorkerRegistry workers,
+                                 RunStore store, CollaborationConfig config, ObjectMapper json,
+                                 AgentTelemetry telemetry, RunLeasePolicy leasePolicy,
+                                 ActiveConfigurationProvider configurationProvider, String configurationEnvironment,
+                                 String configurationAgentId) {
+        this(model, allTools, workers, store, config, json, telemetry, leasePolicy, configurationProvider,
+                configurationEnvironment, configurationAgentId, null);
+    }
+
+    public CollaborativeWorkflow(ModelClient model, ToolRegistry allTools, WorkerRegistry workers,
+                                 RunStore store, CollaborationConfig config, ObjectMapper json,
+                                 AgentTelemetry telemetry, RunLeasePolicy leasePolicy,
+                                 ActiveConfigurationProvider configurationProvider, String configurationEnvironment,
+                                 String configurationAgentId,
+                                 com.example.agent.configuration.RunConfigurationSnapshot fixedConfigurationSnapshot) {
         this.model = java.util.Objects.requireNonNull(model);
         this.allTools = java.util.Objects.requireNonNull(allTools);
         this.workers = java.util.Objects.requireNonNull(workers);
@@ -105,14 +129,30 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         this.json = java.util.Objects.requireNonNull(json);
         this.telemetry = java.util.Objects.requireNonNull(telemetry);
         this.leasePolicy = java.util.Objects.requireNonNull(leasePolicy);
-        this.planValidator = new TaskPlanValidator(workers, config.maxTasks());
+        this.configurationProvider = configurationProvider;
+        this.configurationEnvironment = configurationEnvironment;
+        this.configurationAgentId = configurationAgentId;
+        this.fixedConfigurationSnapshot = fixedConfigurationSnapshot;
+        if (configurationProvider != null && fixedConfigurationSnapshot != null) {
+            throw new IllegalArgumentException("Use either active configuration lookup or a fixed configuration snapshot");
+        }
+        if (configurationProvider != null && (configurationEnvironment == null || configurationEnvironment.isBlank()
+                || configurationAgentId == null || configurationAgentId.isBlank())) {
+            throw new IllegalArgumentException("Active configuration lookup keys are required");
+        }
         this.contractValidator = new WorkerContractValidator(json);
         validateWorkerToolAllowLists();
     }
 
     public RunRecord runTracked(String input) {
         String runId = UUID.randomUUID().toString();
-        RunRecord run = RunRecord.create(runId, input, config.timeout(), RunType.COLLABORATIVE);
+        var snapshot = fixedConfigurationSnapshot != null ? fixedConfigurationSnapshot
+                : configurationProvider == null ? null : configurationProvider.resolve(configurationEnvironment,
+                configurationAgentId, runId);
+        validatePinnedConfiguration(snapshot);
+        RunRecord run = RunRecord.create(runId, input, snapshot == null ? config.timeout()
+                : min(config.timeout(), Duration.ofMillis(snapshot.document().runtime().taskTimeoutMillis())), RunType.COLLABORATIVE);
+        run.setConfigurationSnapshot(snapshot);
         run.addMessage(Message.user(input));
         Control control = new Control();
         control.active = true;
@@ -134,6 +174,9 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 run = store.find(runId).orElseThrow(() -> new IllegalArgumentException("Run not found"));
                 if (run.runType() != RunType.COLLABORATIVE)
                     throw new IllegalStateException("Run belongs to a different workflow type");
+                if (configurationProvider != null && run.configurationSnapshot() == null)
+                    throw new IllegalStateException("Run has no pinned configuration snapshot and cannot be resumed safely");
+                validatePinnedConfiguration(run.configurationSnapshot());
                 if (run.status() != RunStatus.CREATED && run.status() != RunStatus.RUNNING)
                     throw new IllegalStateException("Only a non-terminal run can be resumed");
                 control.active = true;
@@ -205,7 +248,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         run.setFencingToken(lease.fencingToken());
         Observation runObservation = telemetry.startRun(run, "collaborative");
         Observation.Scope runScope = runObservation.openScope();
-        SharedRunBudget budget = new SharedRunBudget(run, config, store, lease);
+        SharedRunBudget budget = new SharedRunBudget(run, collaborationConfig(run), store, lease);
         try {
             if (run.status() == RunStatus.CREATED) run.transitionTo(RunStatus.RUNNING, Instant.now(), null);
             persist(run);
@@ -275,7 +318,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         String planStepId = UUID.randomUUID().toString();
         run.addStep(RunStep.workflow(planStepId, StepKind.PLAN, null, "supervisor", "PLAN", start));
         List<Message> plannerMessages = List.of(Message.system(SUPERVISOR_PROMPT),
-                Message.user(supervisorRequest() + "\n\nUser request:\n" + run.userInput()));
+                Message.user(supervisorRequest(run) + "\n\nUser request:\n" + run.userInput()));
         run.setPlanningInputUtf8Bytes(plannerMessages.stream().map(Message::content)
                 .mapToLong(content -> content.getBytes(StandardCharsets.UTF_8).length).sum());
         persist(run);
@@ -293,7 +336,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         TaskPlan plan;
         try {
             plan = json.readValue(response.content(), TaskPlan.class);
-            planValidator.validate(plan);
+            new TaskPlanValidator(workers, collaborationConfig(run).maxTasks()).validate(plan);
+            validatePinnedWorkerContracts(run, plan);
         } catch (Exception invalid) {
             FailureCategory category = FailureCategory.PLAN_INVALID;
             if (invalid instanceof WorkerContractException contractFailure) {
@@ -321,7 +365,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     private void validatePersistedPlan(RunRecord run) throws WorkflowAbort {
         try {
             try {
-                planValidator.validate(run.taskPlan());
+                new TaskPlanValidator(workers, collaborationConfig(run).maxTasks()).validate(run.taskPlan());
+                validatePinnedWorkerContracts(run, run.taskPlan());
             } catch (WorkerContractException invalidContract) {
                 run.setWorkerContractIssues(invalidContract.issues());
                 throw new WorkflowAbort(FailureCategory.WORKER_CONTRACT_VIOLATION);
@@ -362,10 +407,96 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         }
     }
 
-    private String supervisorRequest() {
-        String roster = workers.all().stream().map(worker -> {
+    private CollaborationConfig collaborationConfig(RunRecord run) {
+        if (run.configurationSnapshot() == null) return config;
+        RuntimeSettings settings = run.configurationSnapshot().document().runtime();
+        return new CollaborationConfig(Math.min(settings.maxTasks(), config.maxTasks()),
+                Math.min(settings.maxParallelism(), config.maxParallelism()),
+                Math.min(settings.maxModelCalls(), config.maxModelCalls()),
+                Math.min(settings.maxToolCalls(), config.maxToolCalls()),
+                Math.min(settings.maxModelRetries(), config.maxModelRetries()),
+                min(config.timeout(), Duration.ofMillis(settings.taskTimeoutMillis())),
+                min(config.toolTimeout(), Duration.ofMillis(settings.toolTimeoutMillis())), config.separateTaskWorkers());
+    }
+
+    private static Duration min(Duration first, Duration second) {
+        return first.compareTo(second) <= 0 ? first : second;
+    }
+
+    private ModelRequestOptions modelOptions(RunRecord run) {
+        if (run.configurationSnapshot() == null) return null;
+        var modelSettings = run.configurationSnapshot().document().model();
+        if (!"deepseek".equalsIgnoreCase(modelSettings.provider())) {
+            throw new IllegalStateException("Pinned model provider is not supported by this runtime");
+        }
+        return ModelRequestOptions.from(modelSettings);
+    }
+
+    private List<com.example.agent.model.ToolDefinition> modelTools(RunRecord run,
+            List<com.example.agent.model.ToolDefinition> offered) {
+        if (run.configurationSnapshot() == null) return offered;
+        var allowed = run.configurationSnapshot().document().allowedTools();
+        return offered.stream().filter(tool -> allowed.contains(tool.name())).toList();
+    }
+
+    private List<Message> modelMessages(RunRecord run, List<Message> original) {
+        if (run.configurationSnapshot() == null) return List.copyOf(original);
+        var document = run.configurationSnapshot().document();
+        StringBuilder prompt = new StringBuilder(document.systemPrompt());
+        for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
+                .append("\n").append(skill.content());
+        if (prompt.isEmpty()) return List.copyOf(original);
+        var messages = new ArrayList<Message>();
+        messages.add(Message.system(prompt.toString()));
+        messages.addAll(original);
+        return List.copyOf(messages);
+    }
+
+    private boolean configurationToolAllowed(RunRecord run, String toolName) {
+        return run.configurationSnapshot() == null
+                || run.configurationSnapshot().document().allowedTools().contains(toolName);
+    }
+
+    private boolean workerAllowedByPinnedConfig(RunRecord run, WorkerSpec worker) {
+        if (run.configurationSnapshot() == null) return true;
+        Map<String, String> contractVersions = run.configurationSnapshot().document().workerContractVersions();
+        return contractVersions.isEmpty() || java.util.Objects.equals(contractVersions.get(worker.workerId()), worker.version());
+    }
+
+    private boolean configurationToolAllowedForRoster(RunRecord run, String toolName) {
+        return configurationToolAllowed(run, toolName);
+    }
+
+    private void validatePinnedWorkerContracts(RunRecord run, TaskPlan plan) {
+        if (run.configurationSnapshot() == null || run.configurationSnapshot().document().workerContractVersions().isEmpty()
+                || plan.route() != TaskPlan.Route.DELEGATE) return;
+        List<WorkerContractIssue> mismatches = plan.tasks().stream().map(task -> {
+            WorkerSpec worker = workers.find(task.workerId()).orElse(null);
+            String expected = run.configurationSnapshot().document().workerContractVersions().get(task.workerId());
+            return worker != null && java.util.Objects.equals(expected, worker.version()) ? null
+                    : new WorkerContractIssue(task.workerId(), "CONFIGURATION", "PINNED_WORKER_VERSION_MISMATCH");
+        }).filter(java.util.Objects::nonNull).toList();
+        if (!mismatches.isEmpty()) throw new WorkerContractException(mismatches);
+    }
+
+    private void validatePinnedConfiguration(com.example.agent.configuration.RunConfigurationSnapshot snapshot) {
+        if (snapshot == null) return;
+        if (!"deepseek".equalsIgnoreCase(snapshot.document().model().provider()))
+            throw new IllegalStateException("Pinned model provider is not supported by this runtime");
+        if (snapshot.document().allowedTools().stream().anyMatch(name -> allTools.find(name).isEmpty()))
+            throw new IllegalStateException("Pinned configuration references an unregistered tool");
+        var mismatched = snapshot.document().workerContractVersions().entrySet().stream().anyMatch(entry ->
+                workers.find(entry.getKey()).map(worker -> !java.util.Objects.equals(worker.version(), entry.getValue()))
+                        .orElse(true));
+        if (mismatched) throw new IllegalStateException("Pinned configuration references an unavailable Worker contract version");
+    }
+
+    private String supervisorRequest(RunRecord run) {
+        String roster = workers.all().stream().filter(worker -> workerAllowedByPinnedConfig(run, worker)).map(worker -> {
+            List<String> offeredTools = worker.allowedTools().stream()
+            .filter(name -> configurationToolAllowedForRoster(run, name)).toList();
             if (worker.version() == null) return "- " + worker.workerId() + ": "
-                    + worker.responsibility() + "; tools=" + worker.allowedTools();
+                    + worker.responsibility() + "; tools=" + offeredTools;
             JsonNode inputSchema = worker.inputSchema();
             JsonNode properties = inputSchema.path("properties");
             List<String> fields = schemaFieldSummary(inputSchema);
@@ -373,10 +504,10 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             return "- " + worker.workerId() + ": " + worker.planningSummary() + "; inputs=" + fields
                     + "; inputSummary=" + worker.inputSummary() + "; output=" + worker.outputSummary()
                     + "; outputFields=" + outputs
-                    + "; tools=" + worker.allowedTools();
+                    + "; tools=" + offeredTools;
         }).reduce((a, b) -> a + "\n" + b).orElse("(no workers registered)");
         return "Registered workers (only these may be selected):\n" + roster
-                + "\nMaximum tasks: " + config.maxTasks()
+                + "\nMaximum tasks: " + collaborationConfig(run).maxTasks()
                 + "\nFor every expected output, add a deliverable and map it to at least one task."
                 + "\nEach task must include acceptanceCriteria and inputBindings. For parent values use "
                 + "{\"field\":\"...\",\"source\":\"PARENT_REQUEST\",\"parentValue\":...}. "
@@ -408,7 +539,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             persist(run);
         }
         ToolRegistry fullRegistry = allTools;
-        try (ToolExecutor executor = new ToolExecutor(fullRegistry, config.toolTimeout())) {
+        try (ToolExecutor executor = new ToolExecutor(fullRegistry, collaborationConfig(run).toolTimeout())) {
             String answer = runAgentLoop(run, null, "single-agent", messages, fullRegistry, executor,
                     Integer.MAX_VALUE, Integer.MAX_VALUE, control, budget);
             run.setFinalAnswer(answer);
@@ -422,7 +553,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             awaitSeparateWorkers(run, control);
             return;
         }
-        ExecutorService executor = Executors.newFixedThreadPool(config.maxParallelism());
+        int parallelism = collaborationConfig(run).maxParallelism();
+        ExecutorService executor = Executors.newFixedThreadPool(parallelism);
         control.workerExecutor = executor;
         Map<String, PlannedTask> specs = new HashMap<>();
         run.taskPlan().tasks().forEach(task -> specs.put(task.taskId(), task));
@@ -440,13 +572,13 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 markUnresolvableTasksSkipped(run);
                 continue;
             }
-            for (int offset = 0; offset < ready.size(); offset += config.maxParallelism()) {
+            for (int offset = 0; offset < ready.size(); offset += parallelism) {
                 checkCancelled(run, control);
                 checkDeadline(run);
                 if (budget.remainingModelCalls() == 0)
                     throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
                 List<ChildTaskRecord> batch = ready.subList(offset,
-                        Math.min(ready.size(), offset + config.maxParallelism()));
+                        Math.min(ready.size(), offset + parallelism));
                 List<Future<?>> futures = new ArrayList<>();
                 for (ChildTaskRecord task : batch) {
                     futures.add(executor.submit(() -> {
@@ -484,7 +616,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     }
 
     private void drainSeparateWorkers(RunRecord run) {
-        long graceMillis = Math.min(30_000, config.toolTimeout().toMillis() + 1_000);
+        long graceMillis = Math.min(30_000, collaborationConfig(run).toolTimeout().toMillis() + 1_000);
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(graceMillis);
         while (System.nanoTime() < deadline) {
             refreshChildTaskProjection(run);
@@ -527,7 +659,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 .filter(value -> value.taskId().equals(taskLease.taskId())).findFirst().orElse(null);
         if (plan == null) throw new IllegalStateException("Claimed task is absent from the persisted task plan");
         Control control = new Control();
-        SharedRunBudget budget = new SharedRunBudget(run, config, store, parentLease);
+        SharedRunBudget budget = new SharedRunBudget(run, collaborationConfig(run), store, parentLease);
         activeParentLease.set(parentLease);
         activeTaskLease.set(taskLease);
         try {
@@ -542,7 +674,8 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                                          Control control, SharedRunBudget budget) {
         ChildTaskRecord task = childTask(run, taskId);
         WorkerSpec worker = workers.find(plan.workerId()).orElse(null);
-        if (worker == null || !java.util.Objects.equals(task.workerVersion(), worker.version())
+        if (worker == null || !workerAllowedByPinnedConfig(run, worker)
+                || !java.util.Objects.equals(task.workerVersion(), worker.version())
                 || !java.util.Objects.equals(plan.workerVersion(), worker.version())) {
             ChildTaskRecord failed = task.finish(TaskStatus.FAILED, null,
                     FailureCategory.WORKER_CONTRACT_MISMATCH, Instant.now());
@@ -599,7 +732,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         }
         ToolRegistry restricted = allTools.restrictedTo(worker.allowedTools());
         try (var workerScope = workerObservation.openScope();
-             ToolExecutor executor = new ToolExecutor(restricted, config.toolTimeout())) {
+             ToolExecutor executor = new ToolExecutor(restricted, collaborationConfig(run).toolTimeout())) {
             String result = runAgentLoop(run, taskId, worker.workerId(), messages, restricted, executor,
                     worker.maxModelCalls(), worker.maxToolCalls(), control, budget);
             if (result == null || result.isBlank()) throw new ModelClientException(FailureCategory.WORKER_FAILED, false);
@@ -735,7 +868,10 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                     com.example.agent.tool.ToolResult result;
                     try (var scope = stepObservation.openScope()) {
                         ensureCurrentTaskLease(run);
-                        result = toolExecutor.execute(call, run.runId(), pending.stepId(), remaining(run));
+                        result = configurationToolAllowed(run, call.name())
+                                ? toolExecutor.execute(call, run.runId(), pending.stepId(), remaining(run))
+                                : com.example.agent.tool.ToolResult.failure(call.id(), call.name(),
+                                    "Tool is not allowed by the pinned Run configuration", FailureCategory.TOOL_NOT_ALLOWED);
                     } catch (RuntimeException failure) {
                         stepObservation.error(failure);
                         stepObservation.stop();
@@ -808,7 +944,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                 run.markTokenUsageUnknown();
                 persist(run);
                 telemetry.finishStep(stepObservation, run.step(stepId), "collaborative");
-                if (!failure.retryable() || retries >= config.maxModelRetries()
+                if (!failure.retryable() || retries >= collaborationConfig(run).maxModelRetries()
                         || budget.remainingModelCalls() == 0 || !Instant.now().isBefore(run.deadlineAt())) throw failure;
                 retries++;
             }
@@ -832,7 +968,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             throws WorkflowAbort, ModelClientException {
         FutureTask<ModelResponse> task = new FutureTask<>(() -> {
             try (var scope = stepObservation.openScope()) {
-                return model.complete(List.copyOf(messages), tools);
+                return model.complete(modelMessages(run, messages), modelTools(run, tools), modelOptions(run));
             }
         });
         control.registerModelTask(task);
@@ -1042,7 +1178,10 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             com.example.agent.tool.ToolResult result;
             try (var scope = stepObservation.openScope()) {
                 ensureCurrentTaskLease(run);
-                result = executor.execute(call, run.runId(), step.stepId(), remaining(run));
+                result = configurationToolAllowed(run, call.name())
+                        ? executor.execute(call, run.runId(), step.stepId(), remaining(run))
+                        : com.example.agent.tool.ToolResult.failure(call.id(), call.name(),
+                            "Tool is not allowed by the pinned Run configuration", FailureCategory.TOOL_NOT_ALLOWED);
             } catch (RuntimeException failure) {
                 stepObservation.error(failure);
                 stepObservation.stop();

@@ -17,4 +17,8 @@ public interface AgentConfigStore {
                    int candidatePercent, long expectedVersion, ReleaseAction action, String actor,
                    String reason, Instant at);
     List<ReleaseEvent> events(String environment, String agentId, int limit);
+    void saveGateAttempt(ConfigurationGateAttempt attempt);
+    List<ConfigurationGateAttempt> gateAttempts(int limit);
+    void approveRelease(ReleaseApproval approval);
+    boolean isApproved(String releaseId);
 }

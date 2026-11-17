@@ -1,6 +1,16 @@
 package com.example.agent.runtime;
 
 import com.example.agent.client.ModelClient;
+import com.example.agent.client.ModelRequestOptions;
+import com.example.agent.configuration.ActiveConfigAssignment;
+import com.example.agent.configuration.ActiveConfigurationProvider;
+import com.example.agent.configuration.AgentConfigDocument;
+import com.example.agent.configuration.AgentConfigRelease;
+import com.example.agent.configuration.AgentConfigRevision;
+import com.example.agent.configuration.AgentConfigStore;
+import com.example.agent.configuration.ModelSettings;
+import com.example.agent.configuration.RuntimeSettings;
+import com.example.agent.configuration.SkillDefinition;
 import com.example.agent.model.Message;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
@@ -37,6 +47,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * AgentRuntime 的无网络行为测试。
@@ -46,6 +58,103 @@ import static org.mockito.Mockito.spy;
  */
 class AgentRuntimeTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void appliesPinnedPromptModelParametersAndToolAllowListToEveryModelRequest() throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new CalculatorTool());
+        List<Message> observedMessages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<ToolDefinition> observedTools = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<ModelRequestOptions> observedOptions = new AtomicReference<>();
+        ModelClient model = new ModelClient() {
+            @Override public ModelResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+                return new ModelResponse("legacy", List.of());
+            }
+            @Override public ModelResponse complete(List<Message> messages, List<ToolDefinition> tools,
+                                                    ModelRequestOptions options) {
+                observedMessages.addAll(messages);
+                observedTools.addAll(tools);
+                observedOptions.set(options);
+                return new ModelResponse("configured answer", List.of());
+            }
+        };
+        var snapshot = snapshot("release-configured", "Custom system policy", List.of(
+                new SkillDefinition("style", "Use concise Chinese.")), java.util.Set.of("calculator"));
+        ActiveConfigurationProvider provider = activeProvider(snapshot);
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(1))) {
+            var runtime = new AgentRuntime(model, registry, executor, new InMemoryRunStore(),
+                    new RuntimeConfig(5, 5, 0, Duration.ofMinutes(1)), AgentTelemetry.noop(),
+                    RunLeasePolicy.DEFAULT, provider, "test", "agent");
+
+            var run = runtime.runTracked("calculate");
+
+            assertEquals(com.example.agent.workflow.RunStatus.SUCCEEDED, run.status());
+            assertEquals("release-configured", run.configurationSnapshot().releaseId());
+        }
+        assertEquals("Custom system policy", observedMessages.getFirst().content().substring(0,
+                "Custom system policy".length()));
+        assertTrue(observedMessages.getFirst().content().contains("Use concise Chinese."));
+        assertEquals(List.of("calculator"), observedTools.stream().map(ToolDefinition::name).toList());
+        assertEquals("deepseek-chat", observedOptions.get().model());
+        assertEquals(0.25, ((Number) observedOptions.get().parameters().get("temperature")).doubleValue());
+    }
+
+    @Test
+    void rejectsModelForgedCallToToolOutsidePinnedAllowList() throws Exception {
+        AtomicInteger toolExecutions = new AtomicInteger();
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new com.example.agent.tool.AgentTool() {
+            @Override public String name() { return "restricted"; }
+            @Override public String description() { return "restricted"; }
+            @Override public com.fasterxml.jackson.databind.JsonNode inputSchema() {
+                return JSON.createObjectNode().put("type", "object");
+            }
+            @Override public com.fasterxml.jackson.databind.JsonNode execute(com.fasterxml.jackson.databind.JsonNode args) {
+                toolExecutions.incrementAndGet();
+                return JSON.createObjectNode().put("ok", true);
+            }
+        });
+        AtomicInteger modelCalls = new AtomicInteger();
+        ModelClient model = (messages, tools) -> modelCalls.getAndIncrement() == 0
+                ? new ModelResponse("", List.of(new ToolCall("forged", "restricted", JSON.createObjectNode())))
+                : new ModelResponse("The tool is unavailable.", List.of());
+        var provider = activeProvider(snapshot("release-limited", "policy", List.of(), java.util.Set.of()));
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(1))) {
+            var runtime = new AgentRuntime(model, registry, executor, new InMemoryRunStore(),
+                    new RuntimeConfig(5, 5, 0, Duration.ofMinutes(1)), AgentTelemetry.noop(),
+                    RunLeasePolicy.DEFAULT, provider, "test", "agent");
+            var run = runtime.runTracked("try tool");
+            assertEquals(com.example.agent.workflow.RunStatus.SUCCEEDED, run.status());
+            assertEquals(com.example.agent.workflow.FailureCategory.TOOL_NOT_ALLOWED,
+                    run.steps().stream().filter(step -> step.toolName() != null).findFirst().orElseThrow().failureCategory());
+        }
+        assertEquals(0, toolExecutions.get());
+    }
+
+    private static ActiveConfigurationProvider activeProvider(com.example.agent.configuration.RunConfigurationSnapshot snapshot) {
+        AgentConfigStore store = mock(AgentConfigStore.class);
+        AgentConfigRevision revision = AgentConfigRevision.create(snapshot.document(), JSON);
+        var release = new AgentConfigRelease(snapshot.releaseId(), revision.revisionId(), revision.contentHash(),
+                "eval-test", null, JSON.createObjectNode().put("policy", "test"), null, "test", "test",
+                java.time.Instant.now());
+        when(store.assignment("test", "agent")).thenReturn(java.util.Optional.of(
+                new ActiveConfigAssignment("test", "agent", release.releaseId(), null, 0, 1,
+                        java.time.Instant.now())));
+        when(store.findRelease(release.releaseId())).thenReturn(java.util.Optional.of(release));
+        when(store.findRevision(revision.revisionId())).thenReturn(java.util.Optional.of(revision));
+        return new ActiveConfigurationProvider(store);
+    }
+
+    private static com.example.agent.configuration.RunConfigurationSnapshot snapshot(String releaseId, String prompt,
+            List<SkillDefinition> skills, java.util.Set<String> tools) {
+        var document = new AgentConfigDocument(1, prompt, skills,
+                new ModelSettings("deepseek", "deepseek-chat", java.util.Map.of("temperature", 0.25),
+                        "secret://deepseek/api-key"), tools, java.util.Map.of(),
+                new RuntimeSettings(5, 5, 0, 60_000, 10, 2));
+        var revision = AgentConfigRevision.create(document, JSON);
+        return new com.example.agent.configuration.RunConfigurationSnapshot(releaseId, revision.revisionId(),
+                revision.contentHash(), document);
+    }
 
     @Test
     void propagatesRunAndModelStepObservationToModelClientThread() {

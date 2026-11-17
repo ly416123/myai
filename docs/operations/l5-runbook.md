@@ -189,3 +189,15 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
   保持 Testcontainers Ryuk 清理容器启用；socket override 让 Ryuk 在 Colima Linux VM 内挂载正确的 Docker socket。构建后检查 Surefire 汇总的 skipped 数，避免 Docker 探测问题让集成测试静默跳过。
 - Tempo Trace 保留期限当前为 7 天，使用同节点本地 PVC；Collector 磁盘队列及 Tempo 查询链路已完成一次合成数据验收。数据库与 Trace 均无备份能力；节点或磁盘故障可造成不可恢复的数据丢失。RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
 - 当前不提供 PostgreSQL 备份/恢复能力。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。
+
+## 7. Agent 配置发布（阶段六）
+
+阶段六配置发布能力已在本机完成范围验收，但**尚未部署到 L5**。部署版本与数据库迁移核对完成前，不要在 L5 执行阶段六配置写入或激活命令。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准；配置记录、评测门禁、审批和激活事件均写入 PostgreSQL。
+
+建议按以下顺序操作：创建不可变 Revision，运行关联的离线评测并查看门禁结果；只有门禁通过才会生成 Release；由操作者显式记录审批后，才可激活或灰度；使用 `current`、`history`、`run <runId>` 和 `gate-attempts` 复核变更及 Run 快照。激活和回滚使用数据库版本 CAS；并发冲突时命令应失败，由操作者重新读取当前状态后再决定，不要直接改数据库表。配置差异输出经过字段过滤，但发布前仍需人工复核 Prompt、Skill 和参数内容。
+
+当前 CLI 操作者 `local-cli` 未认证。审批记录是不可变的流程审计，不等于身份认证、双人审批或生产授权；配置发布命令仅可在受控终端使用。Revision 的凭据只接受 `secret://` 引用，明文 Secret 不应进入配置文件、发布说明或审计原因。常见凭据字面量检测不是完整的 Secret 扫描。
+
+自动回滚默认关闭。只有显式设置 `AGENT_CONFIG_AUTO_ROLLBACK_ENABLED=true` 才启用；其他默认值为：最小样本数 `10`、失败率阈值 `0.5`、观察窗口 `PT15M`、冷却期 `PT30M`、扫描上限 `1000`、检查间隔与初始延迟均为 `PT30S`。阈值统计灰度候选 Release 的 SUCCEEDED/PARTIAL/FAILED Run，不能代表语义质量。样本不足、扫描结果达到上限或冷却期内不会做出回滚决定。要启用前须由运行负责人评估环境流量与阈值，再通过部署配置显式设置；不建议仅为本地测试打开定时器。
+
+本阶段的本机测试和 V12 迁移验证不构成 L5 部署验收。后续部署前应重新核对 L5 节点、PVC、Pod requests/limits、数据库迁移备份/恢复边界及镜像来源；本项目当前没有数据库备份/恢复流程，不能把回滚应用配置等同于数据库回滚。

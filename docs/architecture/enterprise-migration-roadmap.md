@@ -146,9 +146,13 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 
 **状态：功能验收通过并已合入 `main`（2026-11-17）。** Worker 版本化输入/输出契约、派发前输入绑定校验、结果 Schema 校验和恢复契约版本校验均已实现。本机 218 项测试通过，PR #9 对应 GitHub Actions `verify` 通过，L5 Worker 2/2 Ready；详情见[阶段五总结](../stages/phase-05-summary.html)。这表示阶段五已完成，不表示整个项目已生产就绪。
 
-### 后续候选需求：Agent 配置版本与生产发布（2026-11-17）
+### 阶段六：Agent 配置版本、发布与运行时切换（2026-11-17，本机功能验收通过）
 
-阶段六已开始，范围按[阶段六需求](../plans/phase-06-requirements.md)执行。当前采用 PostgreSQL 作为修订、发布、激活指针和发布事件的权威存储；配置修订按规范化内容生成不可变 SHA-256 标识；每个 Run 在创建时固定 Release 快照，恢复沿用原快照。发布门禁关联阶段四离线评测，不把 Evaluation 与 Release 混为同一对象。HTTP API 和生产身份认证/授权仍暂不交付；可信身份未就绪前只允许环境/实例级灰度，不启用用户/租户分桶。在线评测仍是后续候选，不采集生产对话用于本阶段门禁。阶段验收证据形成前不标记阶段六完成。
+需求与范围见[阶段六需求](../plans/phase-06-requirements.md)，验收证据见[阶段六总结](../stages/phase-06-summary.html)。本机 `mvn --batch-mode --no-transfer-progress clean verify` 通过：257 项测试，0 失败、0 错误、0 跳过；Testcontainers PostgreSQL 实际执行迁移至 V12，并验证配置切换和 Run 快照固定。已实现 PostgreSQL 不可变 Revision/Release、离线 Evaluation 门禁与追加式门禁尝试审计、独立审批记录、激活 CAS/灰度/手工回滚、每个 Run 固定配置快照、运行时配置应用、配置历史与脱敏差异 CLI，以及可选自动回滚。GitHub Actions、镜像发布和 L5 部署尚未对阶段六变更执行，因此只确认本机范围内验收通过。
+
+自动回滚默认关闭，按环境与 Agent 配置启用；固定延迟检查使用有界最近 Run 页，样本不足、扫描页饱和、冷却期或数据异常时不执行决策。只统计候选版本窗口内 SUCCEEDED/PARTIAL/FAILED Run，取消/未完成任务排除；达阈值后通过 Assignment 版本 CAS 移除候选并追加事件。灰度只按稳定 Run ID 分桶，不声称用户级粘性。配置引用与哈希不一致或静态工具/Worker 版本缺失时拒绝创建新 Run；已有 Run 与恢复使用其检查点快照。
+
+配置版本与门禁均保存在 PostgreSQL。发布门禁通过或拒绝记录和激活/回滚事件分开存储；明文凭据字段不可表达，提示词、Skill 和审计文本另有常见凭据字面量拒绝规则，但该规则不替代内容审查。自动回滚是以 Run 终态失败率作为确定性操作阈值，不是模型语义质量评测或生产质量保证。HTTP API、生产身份认证授权、用户/租户灰度和在线 Trace 评测仍暂缓/不在范围内；L5 部署、GitHub Actions 和镜像发布尚未对阶段六变更实施。
 
 ### 当前可继续实施
 

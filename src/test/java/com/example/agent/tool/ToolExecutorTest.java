@@ -112,6 +112,27 @@ class ToolExecutorTest {
         }
     }
 
+    @Test
+    void appliesRunSpecificToolTimeoutBeforeStaticMaximum() throws Exception {
+        AgentTool slow = new AgentTool() {
+            @Override public String name() { return "slow"; }
+            @Override public String description() { return "slow test tool"; }
+            @Override public JsonNode inputSchema() { return JSON.createObjectNode().put("type", "object"); }
+            @Override public JsonNode execute(JsonNode arguments) throws Exception {
+                Thread.sleep(500);
+                return JSON.createObjectNode().put("ok", true);
+            }
+        };
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(slow);
+        try (ToolExecutor executor = new ToolExecutor(registry, Duration.ofSeconds(2))) {
+            ToolResult result = executor.execute(new ToolCall("slow-call", "slow", JSON.createObjectNode()),
+                    "run-timeout", "step-timeout", Duration.ofMillis(30), Duration.ofSeconds(1));
+            assertTrue(result.outcomeUnknown());
+            assertEquals(com.example.agent.workflow.FailureCategory.TOOL_TIMEOUT_UNKNOWN, result.failureCategory());
+        }
+    }
+
     private static AgentTool schemaTool(String name, String schemaJson) throws Exception {
         JsonNode schema = JSON.readTree(schemaJson);
         return new AgentTool() {

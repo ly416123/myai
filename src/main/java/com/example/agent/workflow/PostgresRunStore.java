@@ -28,6 +28,7 @@ public final class PostgresRunStore implements RunStore, ToolExecutionAuditStore
     private static final String SELECT_RUN = """
             SELECT c.payload::text AS payload, r.version, r.fencing_token, r.lease_owner, r.lease_expires_at,
                    r.cancel_requested, r.updated_at, r.model_calls, r.tool_calls
+                   ,r.config_release_id, r.config_hash
             FROM agent_run r JOIN run_checkpoint c ON c.run_id = r.run_id
             """;
     private static final int MAX_RUN_LIST_LIMIT = 1000;
@@ -50,13 +51,16 @@ public final class PostgresRunStore implements RunStore, ToolExecutionAuditStore
                 jdbc.update("""
                                 INSERT INTO agent_run(run_id, run_type, status, user_input, final_answer, failure_category,
                                   deadline_at, created_at, updated_at, model_calls, tool_calls, resumed, prompt_tokens,
-                                  completion_tokens, token_usage_known, cancel_requested, version, fencing_token, lease_owner, lease_expires_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  completion_tokens, token_usage_known, cancel_requested, version, fencing_token, lease_owner, lease_expires_at,
+                                  config_release_id, config_hash)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """, run.runId(), run.runType().name(), run.status().name(), run.userInput(), run.finalAnswer(),
                         name(run.failureCategory()), timestamp(run.deadlineAt()), timestamp(run.createdAt()),
                         timestamp(run.updatedAt()), run.modelCalls(), run.toolCalls(), run.resumed(), run.promptTokens(),
                         run.completionTokens(), run.tokenUsageKnown(), run.cancellationRequested(), run.version(), run.fencingToken(),
-                        run.leaseOwner(), timestamp(run.leaseExpiresAt()));
+                        run.leaseOwner(), timestamp(run.leaseExpiresAt()),
+                        run.configurationSnapshot() == null ? null : run.configurationSnapshot().releaseId(),
+                        run.configurationSnapshot() == null ? null : run.configurationSnapshot().contentHash());
                 jdbc.update("INSERT INTO run_checkpoint(run_id, version, payload, saved_at) VALUES (?, ?, ?::jsonb, ?)",
                         run.runId(), run.version(), payload, timestamp(run.updatedAt()));
                 persistProjection(run, run.updatedAt());
@@ -202,12 +206,15 @@ public final class PostgresRunStore implements RunStore, ToolExecutionAuditStore
                                     UPDATE agent_run SET status = ?, user_input = ?, final_answer = ?, failure_category = ?,
                                       deadline_at = ?, updated_at = ?, model_calls = GREATEST(model_calls, ?),
                                       tool_calls = GREATEST(tool_calls, ?), resumed = ?,
-                                      prompt_tokens = ?, completion_tokens = ?, token_usage_known = ?, version = ?
+                                      prompt_tokens = ?, completion_tokens = ?, token_usage_known = ?, version = ?,
+                                      config_release_id = ?, config_hash = ?
                                     WHERE run_id = ? AND version = ? AND fencing_token = ? AND lease_owner = ?
                                       AND lease_expires_at > ? AND status IN ('CREATED', 'RUNNING')
                                     """, run.status().name(), run.userInput(), run.finalAnswer(), name(run.failureCategory()),
                             timestamp(run.deadlineAt()), timestamp(run.updatedAt()), run.modelCalls(), run.toolCalls(),
                             run.resumed(), run.promptTokens(), run.completionTokens(), run.tokenUsageKnown(), nextVersion,
+                            run.configurationSnapshot() == null ? null : run.configurationSnapshot().releaseId(),
+                            run.configurationSnapshot() == null ? null : run.configurationSnapshot().contentHash(),
                             run.runId(), expectedVersion, token.fencingToken(), token.ownerId(), timestamp(now));
                     if (updated != 1) return false;
                     jdbc.update("UPDATE run_checkpoint SET version = ?, payload = ?::jsonb, saved_at = ? WHERE run_id = ?",
@@ -439,6 +446,13 @@ public final class PostgresRunStore implements RunStore, ToolExecutionAuditStore
     private RunRecord readRun(ResultSet rs) throws SQLException {
         try {
             RunRecord run = mapper.readValue(rs.getString("payload"), RunRecord.class);
+            String projectedReleaseId = rs.getString("config_release_id");
+            String projectedHash = rs.getString("config_hash");
+            var snapshot = run.configurationSnapshot();
+            if (snapshot == null ? projectedReleaseId != null || projectedHash != null
+                    : !snapshot.releaseId().equals(projectedReleaseId) || !snapshot.contentHash().equals(projectedHash)) {
+                throw new IllegalStateException("Run configuration snapshot projection is inconsistent");
+            }
             run.setVersion(rs.getLong("version"));
             run.setFencingToken(rs.getLong("fencing_token"));
             run.setLeaseOwner(rs.getString("lease_owner"));

@@ -4,6 +4,7 @@ import com.example.agent.model.Message;
 import com.example.agent.workflow.RunRecord;
 import com.example.agent.workflow.RunStore;
 import com.example.agent.workflow.RunType;
+import com.example.agent.configuration.ActiveConfigurationProvider;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -13,19 +14,31 @@ public final class RunSubmissionService {
     private final RunStore store;
     private final Duration taskTimeout;
     private final RunSubmissionPolicy submissionPolicy;
+    private final ActiveConfigurationProvider configurationProvider;
+    private final String environment;
+    private final String agentId;
 
     public RunSubmissionService(RunStore store, Duration taskTimeout) {
         this(store, taskTimeout, RunSubmissionPolicy.noAuthentication());
     }
 
     public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy) {
+        this(store, taskTimeout, submissionPolicy, null, null, null);
+    }
+
+    public RunSubmissionService(RunStore store, Duration taskTimeout, RunSubmissionPolicy submissionPolicy,
+                                ActiveConfigurationProvider configurationProvider, String environment, String agentId) {
         if (store == null || taskTimeout == null || taskTimeout.isZero() || taskTimeout.isNegative()
-                || submissionPolicy == null) {
+                || submissionPolicy == null || (configurationProvider != null
+                && (environment == null || environment.isBlank() || agentId == null || agentId.isBlank()))) {
             throw new IllegalArgumentException("Invalid Run submission configuration");
         }
         this.store = store;
         this.taskTimeout = taskTimeout;
         this.submissionPolicy = submissionPolicy;
+        this.configurationProvider = configurationProvider;
+        this.environment = environment;
+        this.agentId = agentId;
     }
 
     public RunRecord submitSingle(String input) {
@@ -50,6 +63,9 @@ public final class RunSubmissionService {
         submissionPolicy.validate(caller, type);
         String normalized = input.trim();
         RunRecord run = RunRecord.create(UUID.randomUUID().toString(), normalized, taskTimeout, type);
+        if (configurationProvider != null) {
+            run.setConfigurationSnapshot(configurationProvider.resolve(environment, agentId, run.runId()));
+        }
         run.addMessage(Message.user(normalized));
         store.save(run);
         return run;

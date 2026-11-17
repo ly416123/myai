@@ -64,6 +64,12 @@ public final class AgentEvaluationRunner {
 
     public AgentEvaluationResult run(AgentEvaluationDataset dataset, String modelName,
                                      AgentEvaluationConfig config, EvaluationProgressListener progress) {
+        return run(dataset, modelName, config, progress, null);
+    }
+
+    public AgentEvaluationResult run(AgentEvaluationDataset dataset, String modelName,
+                                     AgentEvaluationConfig config, EvaluationProgressListener progress,
+                                     com.example.agent.configuration.RunConfigurationSnapshot configurationSnapshot) {
         if (dataset == null || modelName == null || modelName.isBlank() || config == null) {
             throw new IllegalArgumentException("Evaluation dataset, model, and limits are required");
         }
@@ -107,7 +113,7 @@ public final class AgentEvaluationRunner {
             RunRecord run;
             progress.caseStarted(scenario);
             try {
-                run = execute(scenario, remainingModels, remainingTools, caseTimeout);
+                run = execute(scenario, remainingModels, remainingTools, caseTimeout, configurationSnapshot);
             } catch (RuntimeException failure) {
                 var failed = notRun(scenario, "INFRASTRUCTURE_ERROR", config.maxModelCalls(), config.maxToolCalls());
                 results.add(failed); progress.caseCompleted(scenario, failed);
@@ -176,10 +182,12 @@ public final class AgentEvaluationRunner {
         return run(AgentEvaluationDatasetLoader.load(datasetPath, mapper), modelName, config);
     }
 
-    private RunRecord execute(AgentEvaluationScenario scenario, int modelBudget, int toolBudget, Duration timeout) {
+    private RunRecord execute(AgentEvaluationScenario scenario, int modelBudget, int toolBudget, Duration timeout,
+                              com.example.agent.configuration.RunConfigurationSnapshot configurationSnapshot) {
         if (scenario.workflow() == EvaluationWorkflow.SINGLE_AGENT) {
             RuntimeConfig limits = new RuntimeConfig(modelBudget, toolBudget, runtimeDefaults.maxModelRetries(), timeout);
-            try (AgentRuntime runtime = new AgentRuntime(model, tools, toolExecutor, store, limits, telemetry)) {
+            try (AgentRuntime runtime = new AgentRuntime(model, tools, toolExecutor, store, limits, telemetry,
+                    com.example.agent.workflow.RunLeasePolicy.DEFAULT, null, null, null, configurationSnapshot)) {
                 return runtime.runTracked(scenario.prompt());
             }
         }
@@ -187,7 +195,8 @@ public final class AgentEvaluationRunner {
                 collaborationDefaults.maxParallelism(), modelBudget, toolBudget,
                 collaborationDefaults.maxModelRetries(), timeout, collaborationDefaults.toolTimeout(), false);
         try (CollaborativeWorkflow workflow = new CollaborativeWorkflow(model, tools, workers, store,
-                limits, mapper, telemetry)) {
+                limits, mapper, telemetry, com.example.agent.workflow.RunLeasePolicy.DEFAULT, null, null, null,
+                configurationSnapshot)) {
             return workflow.runTracked(scenario.prompt());
         }
     }

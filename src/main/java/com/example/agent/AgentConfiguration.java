@@ -14,6 +14,14 @@ import com.example.agent.tools.CalculatorTool;
 import com.example.agent.tools.TimeTool;
 import com.example.agent.tools.WeatherTool;
 import com.example.agent.workflow.PostgresRunStore;
+import com.example.agent.configuration.AgentConfigStore;
+import com.example.agent.configuration.PostgresAgentConfigStore;
+import com.example.agent.configuration.ActiveConfigurationProvider;
+import com.example.agent.configuration.AgentConfigurationService;
+import com.example.agent.configuration.EvaluationReleaseGate;
+import com.example.agent.configuration.AutomaticRollbackPolicy;
+import com.example.agent.configuration.AutomaticConfigurationRollback;
+import com.example.agent.configuration.ConfigurationAutoRollbackMonitor;
 import com.example.agent.workflow.RunStore;
 import com.example.agent.workflow.RunPollingWorker;
 import com.example.agent.app.RunSubmissionPolicy;
@@ -86,6 +94,46 @@ public class AgentConfiguration {
     }
 
     @Bean
+    AgentConfigStore agentConfigStore(JdbcTemplate jdbc, ObjectMapper mapper) {
+        return new PostgresAgentConfigStore(jdbc, mapper);
+    }
+
+    @Bean
+    ActiveConfigurationProvider activeConfigurationProvider(AgentConfigStore store) {
+        return new ActiveConfigurationProvider(store);
+    }
+
+    @Bean
+    EvaluationReleaseGate evaluationReleaseGate(AgentProperties properties) {
+        return new EvaluationReleaseGate(properties.getConfigurationEvaluationMinimumCases());
+    }
+
+    @Bean
+    AgentConfigurationService agentConfigurationService(AgentConfigStore store, EvaluationReleaseGate gate,
+                                                         ObjectMapper mapper) {
+        return new AgentConfigurationService(store, gate, mapper);
+    }
+
+    @Bean
+    AutomaticConfigurationRollback automaticConfigurationRollback(AgentConfigurationService service,
+                                                                  RunStore runStore, AgentProperties properties) {
+        var policy = properties.isConfigurationAutoRollbackEnabled()
+                ? new AutomaticRollbackPolicy(true, properties.getConfigurationAutoRollbackMinimumSamples(),
+                properties.getConfigurationAutoRollbackFailureRateThreshold(),
+                properties.getConfigurationAutoRollbackObservationWindow(),
+                properties.getConfigurationAutoRollbackCooldown(), properties.getConfigurationAutoRollbackScanLimit())
+                : AutomaticRollbackPolicy.disabled();
+        return new AutomaticConfigurationRollback(service, runStore, policy, java.time.Clock.systemUTC());
+    }
+
+    @Bean
+    ConfigurationAutoRollbackMonitor configurationAutoRollbackMonitor(AutomaticConfigurationRollback rollback,
+                                                                       AgentProperties properties) {
+        return new ConfigurationAutoRollbackMonitor(rollback, properties.getConfigurationEnvironment(),
+                properties.getConfigurationAgentId());
+    }
+
+    @Bean
     RunRetentionService runRetentionService(RunStore store, AgentProperties properties) {
         return new RunRetentionService(store, properties.getRetentionPeriod(), properties.getRetentionBatchSize());
     }
@@ -97,8 +145,9 @@ public class AgentConfiguration {
 
     @Bean
     RunSubmissionService runSubmissionService(RunStore store, AgentProperties properties,
-                                              RunSubmissionPolicy policy) {
-        return new RunSubmissionService(store, properties.getTaskTimeout(), policy);
+                                              RunSubmissionPolicy policy, ActiveConfigurationProvider configProvider) {
+        return new RunSubmissionService(store, properties.getTaskTimeout(), policy, configProvider,
+                properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
     }
 
     @Bean
@@ -154,8 +203,10 @@ public class AgentConfiguration {
     @Bean(destroyMethod = "close")
     AgentRuntime agentRuntime(ModelClient model, ToolRegistry tools, ToolExecutor executor,
                               RunStore store, RuntimeConfig runtimeConfig, AgentTelemetry telemetry,
-                              RunLeasePolicy leasePolicy) {
-        return new AgentRuntime(model, tools, executor, store, runtimeConfig, telemetry, leasePolicy);
+                              RunLeasePolicy leasePolicy, ActiveConfigurationProvider configProvider,
+                              AgentProperties properties) {
+        return new AgentRuntime(model, tools, executor, store, runtimeConfig, telemetry, leasePolicy,
+                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
     }
 
     @Bean
@@ -217,8 +268,10 @@ public class AgentConfiguration {
     @Bean(destroyMethod = "close")
     CollaborativeWorkflow collaborativeWorkflow(ModelClient model, ToolRegistry tools, WorkerRegistry workers,
                                                 RunStore store, CollaborationConfig config, ObjectMapper mapper,
-                                                AgentTelemetry telemetry, RunLeasePolicy leasePolicy) {
-        return new CollaborativeWorkflow(model, tools, workers, store, config, mapper, telemetry, leasePolicy);
+                                                AgentTelemetry telemetry, RunLeasePolicy leasePolicy,
+                                                ActiveConfigurationProvider configProvider, AgentProperties properties) {
+        return new CollaborativeWorkflow(model, tools, workers, store, config, mapper, telemetry, leasePolicy,
+                configProvider, properties.getConfigurationEnvironment(), properties.getConfigurationAgentId());
     }
 
     @Bean(initMethod = "start", destroyMethod = "close")

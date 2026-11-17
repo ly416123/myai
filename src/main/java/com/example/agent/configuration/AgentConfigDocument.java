@@ -14,7 +14,9 @@ public record AgentConfigDocument(int formatVersion, String systemPrompt, List<S
     public AgentConfigDocument {
         if (formatVersion < 1) throw new IllegalArgumentException("Configuration format version must be positive");
         if (systemPrompt == null) throw new IllegalArgumentException("System prompt must be provided (empty is allowed)");
+        ConfigurationSecretGuard.rejectCredentialLiteral(systemPrompt, "System prompt");
         skills = skills == null ? List.of() : List.copyOf(skills);
+        skills.forEach(skill -> ConfigurationSecretGuard.rejectCredentialLiteral(skill.content(), "Skill content"));
         if (skills.stream().map(SkillDefinition::name).distinct().count() != skills.size()) {
             throw new IllegalArgumentException("Skill names must be unique");
         }

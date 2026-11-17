@@ -31,6 +31,21 @@ public final class EvaluationService {
     public EvaluationRunRecord runForConfiguration(AgentEvaluationDatasetSnapshot snapshot, String model,
                                    String configurationHash, AgentEvaluationConfig config,
                                    String provider, String mode) {
+        return runForConfiguration(snapshot, model, configurationHash, config, provider, mode, null);
+    }
+
+    public EvaluationRunRecord runForConfiguration(AgentEvaluationDatasetSnapshot snapshot,
+                                   com.example.agent.configuration.AgentConfigRevision revision,
+                                   AgentEvaluationConfig config, String provider, String mode) {
+        if (revision == null) throw new IllegalArgumentException("Configuration revision is required");
+        return runForConfiguration(snapshot, revision.document().model().model(), revision.contentHash(), config,
+                provider, mode, com.example.agent.configuration.RunConfigurationSnapshot.forEvaluation(revision));
+    }
+
+    private EvaluationRunRecord runForConfiguration(AgentEvaluationDatasetSnapshot snapshot, String model,
+                                   String configurationHash, AgentEvaluationConfig config,
+                                   String provider, String mode,
+                                   com.example.agent.configuration.RunConfigurationSnapshot configurationSnapshot) {
         if (snapshot == null) throw new IllegalArgumentException("Dataset snapshot is required");
         if (configurationHash != null && !configurationHash.matches("[a-f0-9]{64}")) {
             throw new IllegalArgumentException("Evaluation configuration hash is invalid");
@@ -85,7 +100,7 @@ public final class EvaluationService {
             }
         };
         try {
-            var result = runner.run(dataset, model, config, listener);
+            var result = runner.run(dataset, model, config, listener, configurationSnapshot);
             int failed = (int) result.cases().stream().filter(c -> c.scores().stream()
                     .anyMatch(s -> s.outcome() == EvaluationOutcome.FAIL)).count();
             int completed = (int) result.cases().stream().filter(c -> c.runId() != null).count();

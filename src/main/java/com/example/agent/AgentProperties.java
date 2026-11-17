@@ -25,6 +25,15 @@ public class AgentProperties {
     private int maxParallelism = 2;
     private boolean separateTaskWorkers;
     private String executionMode = "interactive";
+    private String configurationEnvironment = "local";
+    private String configurationAgentId = "myai";
+    private int configurationEvaluationMinimumCases = 1;
+    private boolean configurationAutoRollbackEnabled;
+    private int configurationAutoRollbackMinimumSamples = 10;
+    private double configurationAutoRollbackFailureRateThreshold = 0.5;
+    private Duration configurationAutoRollbackObservationWindow = Duration.ofMinutes(15);
+    private Duration configurationAutoRollbackCooldown = Duration.ofMinutes(30);
+    private int configurationAutoRollbackScanLimit = 1000;
     private String task;
     private int workerConcurrency = 4;
     private int workerExpectedInstances = 1;
@@ -73,6 +82,24 @@ public class AgentProperties {
     public void setSeparateTaskWorkers(boolean separateTaskWorkers) { this.separateTaskWorkers = separateTaskWorkers; }
     public String getExecutionMode() { return executionMode; }
     public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }
+    public String getConfigurationEnvironment() { return configurationEnvironment; }
+    public void setConfigurationEnvironment(String value) { this.configurationEnvironment = value; }
+    public String getConfigurationAgentId() { return configurationAgentId; }
+    public void setConfigurationAgentId(String value) { this.configurationAgentId = value; }
+    public int getConfigurationEvaluationMinimumCases() { return configurationEvaluationMinimumCases; }
+    public void setConfigurationEvaluationMinimumCases(int value) { this.configurationEvaluationMinimumCases = value; }
+    public boolean isConfigurationAutoRollbackEnabled() { return configurationAutoRollbackEnabled; }
+    public void setConfigurationAutoRollbackEnabled(boolean value) { this.configurationAutoRollbackEnabled = value; }
+    public int getConfigurationAutoRollbackMinimumSamples() { return configurationAutoRollbackMinimumSamples; }
+    public void setConfigurationAutoRollbackMinimumSamples(int value) { this.configurationAutoRollbackMinimumSamples = value; }
+    public double getConfigurationAutoRollbackFailureRateThreshold() { return configurationAutoRollbackFailureRateThreshold; }
+    public void setConfigurationAutoRollbackFailureRateThreshold(double value) { this.configurationAutoRollbackFailureRateThreshold = value; }
+    public Duration getConfigurationAutoRollbackObservationWindow() { return configurationAutoRollbackObservationWindow; }
+    public void setConfigurationAutoRollbackObservationWindow(Duration value) { this.configurationAutoRollbackObservationWindow = value; }
+    public Duration getConfigurationAutoRollbackCooldown() { return configurationAutoRollbackCooldown; }
+    public void setConfigurationAutoRollbackCooldown(Duration value) { this.configurationAutoRollbackCooldown = value; }
+    public int getConfigurationAutoRollbackScanLimit() { return configurationAutoRollbackScanLimit; }
+    public void setConfigurationAutoRollbackScanLimit(int value) { this.configurationAutoRollbackScanLimit = value; }
     public String getTask() { return task; }
     public void setTask(String task) { this.task = task; }
     public int getWorkerConcurrency() { return workerConcurrency; }

@@ -63,7 +63,13 @@ public final class ToolExecutor implements AutoCloseable {
 
     /** 带任务剩余时限的入口，确保单个工具等待不会超过 Workflow Deadline。 */
     public ToolResult execute(ToolCall call, String runId, String stepId, Duration maxWait) {
+        return execute(call, runId, stepId, timeout, maxWait);
+    }
+
+    /** Run 配置可收紧工具等待时限；静态构造器时限仍作为部署侧硬上限。 */
+    public ToolResult execute(ToolCall call, String runId, String stepId, Duration requestedTimeout, Duration maxWait) {
         java.util.Objects.requireNonNull(call);
+        java.util.Objects.requireNonNull(requestedTimeout);
         java.util.Objects.requireNonNull(maxWait);
         var tool = registry.find(call.name());
         if (tool.isEmpty()) {
@@ -75,7 +81,8 @@ public final class ToolExecutor implements AutoCloseable {
         }
         AgentTool target = tool.get();
         String registeredToolName = target.name();
-        Duration waitLimit = maxWait.compareTo(timeout) < 0 ? maxWait : timeout;
+        Duration waitLimit = requestedTimeout.compareTo(timeout) < 0 ? requestedTimeout : timeout;
+        if (maxWait.compareTo(waitLimit) < 0) waitLimit = maxWait;
         Future<JsonNode> future = null;
         try {
             if (!inputSchemaValidator.isValid(target, call.arguments())) {
