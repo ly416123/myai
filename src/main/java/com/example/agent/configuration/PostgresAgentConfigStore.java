@@ -191,15 +191,20 @@ public final class PostgresAgentConfigStore implements AgentConfigStore {
     @Override
     public void approveRelease(ReleaseApproval approval) {
         if (approval == null) throw new IllegalArgumentException("Release approval is required");
+        // PostgreSQL timestamptz is stored at microsecond precision. Compare the
+        // persisted record at that same precision instead of Java's nanoseconds.
+        Instant persistedApprovalTime = approval.approvedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         jdbc.update("""
                 INSERT INTO agent_config_release_approval(release_id, actor, reason, approved_at)
                 VALUES (?, ?, ?, ?) ON CONFLICT (release_id) DO NOTHING
-                """, approval.releaseId(), approval.actor(), approval.reason(), timestamp(approval.approvedAt()));
+                """, approval.releaseId(), approval.actor(), approval.reason(), timestamp(persistedApprovalTime));
         ReleaseApproval saved = jdbc.query("""
                 SELECT release_id, actor, reason, approved_at FROM agent_config_release_approval WHERE release_id = ?
                 """, rs -> rs.next() ? new ReleaseApproval(rs.getString("release_id"), rs.getString("actor"),
                 rs.getString("reason"), rs.getTimestamp("approved_at").toInstant()) : null, approval.releaseId());
-        if (!approval.equals(saved)) throw new IllegalStateException("Release approval is immutable");
+        ReleaseApproval expected = new ReleaseApproval(approval.releaseId(), approval.actor(), approval.reason(),
+                persistedApprovalTime);
+        if (!expected.equals(saved)) throw new IllegalStateException("Release approval is immutable");
     }
 
     @Override

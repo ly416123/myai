@@ -95,7 +95,10 @@ class PostgresAgentConfigStoreTest {
         store.saveRevision(revision, "a1b2c3d", "ci-release", Instant.now());
         var release = release("rel-approval-record", revision, null, null);
         store.saveRelease(release);
-        var approval = new ReleaseApproval(release.releaseId(), "release-operator", "reviewed candidate", Instant.now());
+        // PostgreSQL timestamptz stores microsecond precision; use nanoseconds to
+        // ensure the repository compares values at the database's actual precision.
+        var approval = new ReleaseApproval(release.releaseId(), "release-operator", "reviewed candidate",
+                Instant.parse("2026-11-17T11:00:00.123456789Z"));
         store.approveRelease(approval);
         assertTrue(store.isApproved(release.releaseId()));
         assertThrows(IllegalStateException.class, () -> store.approveRelease(new ReleaseApproval(
