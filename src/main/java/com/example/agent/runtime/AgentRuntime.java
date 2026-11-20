@@ -2,7 +2,11 @@ package com.example.agent.runtime;
 
 import com.example.agent.client.ModelClient;
 import com.example.agent.client.ModelClientException;
+import com.example.agent.client.ModelRequestOptions;
+import com.example.agent.configuration.RunConfigurationSnapshot;
+import com.example.agent.configuration.RuntimeSettings;
 import com.example.agent.model.Message;
+import com.example.agent.configuration.ActiveConfigurationProvider;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
 import com.example.agent.tool.ToolExecutor;
@@ -52,6 +56,10 @@ public final class AgentRuntime implements AutoCloseable {
     private final RuntimeConfig config;
     private final AgentTelemetry telemetry;
     private final RunLeasePolicy leasePolicy;
+    private final ActiveConfigurationProvider configurationProvider;
+    private final String configurationEnvironment;
+    private final String configurationAgentId;
+    private final RunConfigurationSnapshot fixedConfigurationSnapshot;
     private final ConcurrentHashMap<String, RunControl> runControls = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LeaseToken> runLeases = new ConcurrentHashMap<>();
 
@@ -74,6 +82,22 @@ public final class AgentRuntime implements AutoCloseable {
     public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
                         RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry,
                         RunLeasePolicy leasePolicy) {
+        this(modelClient, registry, toolExecutor, runStore, config, telemetry, leasePolicy, null, null, null);
+    }
+
+    public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
+                        RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry,
+                        RunLeasePolicy leasePolicy, ActiveConfigurationProvider configurationProvider,
+                        String configurationEnvironment, String configurationAgentId) {
+        this(modelClient, registry, toolExecutor, runStore, config, telemetry, leasePolicy, configurationProvider,
+                configurationEnvironment, configurationAgentId, null);
+    }
+
+    public AgentRuntime(ModelClient modelClient, ToolRegistry registry, ToolExecutor toolExecutor,
+                        RunStore runStore, RuntimeConfig config, AgentTelemetry telemetry,
+                        RunLeasePolicy leasePolicy, ActiveConfigurationProvider configurationProvider,
+                        String configurationEnvironment, String configurationAgentId,
+                        RunConfigurationSnapshot fixedConfigurationSnapshot) {
         this.modelClient = java.util.Objects.requireNonNull(modelClient);
         this.registry = java.util.Objects.requireNonNull(registry);
         this.toolExecutor = java.util.Objects.requireNonNull(toolExecutor);
@@ -81,6 +105,17 @@ public final class AgentRuntime implements AutoCloseable {
         this.config = java.util.Objects.requireNonNull(config);
         this.telemetry = java.util.Objects.requireNonNull(telemetry);
         this.leasePolicy = java.util.Objects.requireNonNull(leasePolicy);
+        this.configurationProvider = configurationProvider;
+        this.configurationEnvironment = configurationEnvironment;
+        this.configurationAgentId = configurationAgentId;
+        this.fixedConfigurationSnapshot = fixedConfigurationSnapshot;
+        if (configurationProvider != null && fixedConfigurationSnapshot != null) {
+            throw new IllegalArgumentException("Use either active configuration lookup or a fixed configuration snapshot");
+        }
+        if (configurationProvider != null && (configurationEnvironment == null || configurationEnvironment.isBlank()
+                || configurationAgentId == null || configurationAgentId.isBlank())) {
+            throw new IllegalArgumentException("Active configuration lookup keys are required");
+        }
     }
 
     /**
@@ -99,7 +134,11 @@ public final class AgentRuntime implements AutoCloseable {
     /** 创建稳定 runId 并同步执行一项任务；任何安全边界都会写入 RunStore。 */
     public RunRecord runTracked(String userInput) {
         String runId = UUID.randomUUID().toString();
-        RunRecord run = RunRecord.create(runId, userInput, config.taskTimeout());
+        RunConfigurationSnapshot snapshot = resolveConfiguration(runId);
+        validatePinnedConfiguration(snapshot);
+        RunRecord run = RunRecord.create(runId, userInput, snapshot == null ? config.taskTimeout()
+                : min(config.taskTimeout(), Duration.ofMillis(snapshot.document().runtime().taskTimeoutMillis())));
+        run.setConfigurationSnapshot(snapshot);
         run.addMessage(Message.user(userInput));
         RunControl control = new RunControl();
         control.active = true;
@@ -126,6 +165,8 @@ public final class AgentRuntime implements AutoCloseable {
                 if (run.runType() != com.example.agent.workflow.RunType.SINGLE_AGENT) {
                     throw new IllegalStateException("Run belongs to a different workflow type");
                 }
+                requirePinnedConfiguration(run);
+                validatePinnedConfiguration(run.configurationSnapshot());
                 if (run.status() != RunStatus.RUNNING && run.status() != RunStatus.CREATED) {
                     throw new IllegalStateException("Only a non-terminal run can be resumed");
                 }
@@ -138,6 +179,72 @@ public final class AgentRuntime implements AutoCloseable {
             synchronized (control) { control.active = false; }
             runControls.remove(runId, control);
         }
+    }
+
+    private RunConfigurationSnapshot resolveConfiguration(String runId) {
+        return fixedConfigurationSnapshot != null ? fixedConfigurationSnapshot
+                : configurationProvider == null ? null : configurationProvider.resolve(configurationEnvironment,
+                configurationAgentId, runId);
+    }
+
+    private void requirePinnedConfiguration(RunRecord run) {
+        if (configurationProvider != null && run.configurationSnapshot() == null) {
+            throw new IllegalStateException("Run has no pinned configuration snapshot and cannot be resumed safely");
+        }
+    }
+
+    private void validatePinnedConfiguration(RunConfigurationSnapshot snapshot) {
+        if (snapshot == null) return;
+        if (!"deepseek".equalsIgnoreCase(snapshot.document().model().provider()))
+            throw new IllegalStateException("Pinned model provider is not supported by this runtime");
+        if (snapshot.document().allowedTools().stream().anyMatch(name -> registry.find(name).isEmpty()))
+            throw new IllegalStateException("Pinned configuration references an unregistered tool");
+    }
+
+    private RuntimeSettings runtimeSettings(RunRecord run) {
+        if (run.configurationSnapshot() != null) {
+            RuntimeSettings settings = run.configurationSnapshot().document().runtime();
+            return new RuntimeSettings(Math.min(settings.maxModelCalls(), config.maxModelCalls()),
+                    Math.min(settings.maxToolCalls(), config.maxToolCalls()),
+                    Math.min(settings.maxModelRetries(), config.maxModelRetries()),
+                    min(config.taskTimeout(), Duration.ofMillis(settings.taskTimeoutMillis())).toMillis(),
+                    settings.toolTimeoutMillis(), Math.min(settings.maxTasks(), 10),
+                    Math.min(settings.maxParallelism(), Math.min(settings.maxTasks(), 2)));
+        }
+        return new RuntimeSettings(config.maxModelCalls(), config.maxToolCalls(), config.maxModelRetries(),
+                config.taskTimeout().toMillis(), 10_000, 10, 2);
+    }
+
+    private static Duration min(Duration first, Duration second) {
+        return first.compareTo(second) <= 0 ? first : second;
+    }
+
+    private ModelRequestOptions modelOptions(RunRecord run) {
+        if (run.configurationSnapshot() == null) return null;
+        var settings = run.configurationSnapshot().document().model();
+        if (!"deepseek".equalsIgnoreCase(settings.provider())) {
+            throw new IllegalStateException("Pinned model provider is not supported by this runtime");
+        }
+        return ModelRequestOptions.from(settings);
+    }
+
+    private List<com.example.agent.model.ToolDefinition> modelTools(RunRecord run) {
+        if (run.configurationSnapshot() == null) return registry.definitions();
+        var allowed = run.configurationSnapshot().document().allowedTools();
+        return registry.definitions().stream().filter(tool -> allowed.contains(tool.name())).toList();
+    }
+
+    private List<Message> modelMessages(RunRecord run) {
+        var snapshot = run.configurationSnapshot();
+        if (snapshot == null) return run.messages();
+        var document = snapshot.document();
+        StringBuilder prompt = new StringBuilder(document.systemPrompt());
+        for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
+                .append("\n").append(skill.content());
+        var messages = new java.util.ArrayList<Message>();
+        if (!prompt.isEmpty()) messages.add(Message.system(prompt.toString()));
+        messages.addAll(run.messages());
+        return List.copyOf(messages);
     }
 
     /** 请求取消运行；由执行线程确认终态，正在进行的工具不会被视为已撤销。 */
@@ -223,8 +330,9 @@ public final class AgentRuntime implements AutoCloseable {
             while (true) {
                 checkCancelled(run);
                 checkDeadline(run);
+                RuntimeSettings effective = runtimeSettings(run);
 
-                if (hasPendingTools(run) && run.modelCalls() >= config.maxModelCalls()) {
+                if (hasPendingTools(run) && run.modelCalls() >= effective.maxModelCalls()) {
                     // 没有预算向模型汇报工具结果时，不产生新的工具副作用。
                     throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
                 }
@@ -232,14 +340,14 @@ public final class AgentRuntime implements AutoCloseable {
                 checkCancelled(run);
                 checkDeadline(run);
 
-                if (run.modelCalls() >= config.maxModelCalls()) {
+                if (run.modelCalls() >= effective.maxModelCalls()) {
                     throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
                 }
                 ModelResponse response = requestModelWithRetry(run);
 
                 if (response.hasToolCalls()) {
                     run.addMessage(Message.assistantToolCalls(response.toolCalls()));
-                    if (run.modelCalls() >= config.maxModelCalls()) {
+                    if (run.modelCalls() >= effective.maxModelCalls()) {
                         Instant now = Instant.now();
                         for (ToolCall call : response.toolCalls()) {
                             run.addStep(RunStep.toolPending(UUID.randomUUID().toString(), call.id(), call.name(), now)
@@ -248,7 +356,7 @@ public final class AgentRuntime implements AutoCloseable {
                         persist(run);
                         throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
                     }
-                    if (run.toolCalls() + response.toolCalls().size() > config.maxToolCalls()) {
+                    if (run.toolCalls() + response.toolCalls().size() > effective.maxToolCalls()) {
                         for (ToolCall call : response.toolCalls()) {
                             RunStep denied = RunStep.toolPending(UUID.randomUUID().toString(), call.id(), call.name(), Instant.now())
                                     .finish(RunStepStatus.FAILED, Instant.now(), FailureCategory.TOOL_BUDGET_EXCEEDED, null, null);
@@ -327,7 +435,8 @@ public final class AgentRuntime implements AutoCloseable {
         while (true) {
             checkCancelled(run);
             checkDeadline(run);
-            if (run.modelCalls() >= config.maxModelCalls()) throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
+            RuntimeSettings effective = runtimeSettings(run);
+            if (run.modelCalls() >= effective.maxModelCalls()) throw new WorkflowAbort(FailureCategory.MAX_MODEL_CALLS);
 
             Instant startedAt = Instant.now();
             String stepId = UUID.randomUUID().toString();
@@ -361,8 +470,8 @@ public final class AgentRuntime implements AutoCloseable {
                 log.warn("runId={} stepId={} kind=MODEL status=FAILED failureCategory={} retryable={} durationMs={}",
                         run.runId(), stepId, failure.category(), failure.retryable(),
                         Duration.between(startedAt, completedAt).toMillis());
-                if (!failure.retryable() || retries >= config.maxModelRetries()
-                        || run.modelCalls() >= config.maxModelCalls() || Instant.now().isAfter(run.deadlineAt())) {
+                if (!failure.retryable() || retries >= effective.maxModelRetries()
+                        || run.modelCalls() >= effective.maxModelCalls() || Instant.now().isAfter(run.deadlineAt())) {
                     throw new WorkflowAbort(Instant.now().isAfter(run.deadlineAt())
                             ? FailureCategory.TASK_DEADLINE : failure.category());
                 }
@@ -384,7 +493,7 @@ public final class AgentRuntime implements AutoCloseable {
             throws ModelClientException, WorkflowAbort {
         FutureTask<ModelResponse> task = new FutureTask<>(() -> {
             try (var scope = stepObservation.openScope()) {
-                return modelClient.complete(run.messages(), registry.definitions());
+                return modelClient.complete(modelMessages(run), modelTools(run), modelOptions(run));
             }
         });
         RunControl control = runControls.get(run.runId());
@@ -444,7 +553,7 @@ public final class AgentRuntime implements AutoCloseable {
             checkDeadline(run);
             ToolCall call = findToolCall(run.messages(), step.toolCallId());
             if (call == null) throw new WorkflowAbort(FailureCategory.UNKNOWN);
-            if (run.toolCalls() >= config.maxToolCalls()) throw new WorkflowAbort(FailureCategory.TOOL_BUDGET_EXCEEDED);
+            if (run.toolCalls() >= runtimeSettings(run).maxToolCalls()) throw new WorkflowAbort(FailureCategory.TOOL_BUDGET_EXCEEDED);
 
             Instant startedAt = Instant.now();
             run.replaceStep(step.stepId(), step.start(startedAt));
@@ -454,7 +563,14 @@ public final class AgentRuntime implements AutoCloseable {
             Observation stepObservation = telemetry.startStep(run, run.step(step.stepId()), "single");
             com.example.agent.tool.ToolResult result;
             try (var scope = stepObservation.openScope()) {
-                result = toolExecutor.execute(call, run.runId(), step.stepId(), remaining);
+                if (run.configurationSnapshot() != null
+                        && !run.configurationSnapshot().document().allowedTools().contains(call.name())) {
+                    result = com.example.agent.tool.ToolResult.failure(call.id(), call.name(),
+                            "Tool is not allowed by the pinned Run configuration", FailureCategory.TOOL_NOT_ALLOWED);
+                } else {
+                    result = toolExecutor.execute(call, run.runId(), step.stepId(),
+                            Duration.ofMillis(runtimeSettings(run).toolTimeoutMillis()), remaining);
+                }
             } catch (RuntimeException failure) {
                 stepObservation.error(failure);
                 stepObservation.stop();

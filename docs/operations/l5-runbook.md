@@ -189,3 +189,53 @@ kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o wide
   保持 Testcontainers Ryuk 清理容器启用；socket override 让 Ryuk 在 Colima Linux VM 内挂载正确的 Docker socket。构建后检查 Surefire 汇总的 skipped 数，避免 Docker 探测问题让集成测试静默跳过。
 - Tempo Trace 保留期限当前为 7 天，使用同节点本地 PVC；Collector 磁盘队列及 Tempo 查询链路已完成一次合成数据验收。数据库与 Trace 均无备份能力；节点或磁盘故障可造成不可恢复的数据丢失。RPO/RTO、生产 SLO、数据分类/保留期限仍需业务确认。
 - 当前不提供 PostgreSQL 备份/恢复能力。HTTP API/生产认证授权、告警通知、CA 签名密钥托管/轮换均按当前决策不在本轮实施范围。
+
+## 7. Agent 配置发布（阶段六）
+
+阶段六配置发布能力已通过本机范围验收。功能分支 push 在 GitHub Actions `verify` 成功后发布 `candidate-<commit SHA>-<run ID>-<attempt>` GHCR 镜像；默认分支仍发布正式 `<commit SHA>` 标签。PR 事件只验证、不发布。候选镜像可用于 L5 受控验收，不代表已合入或正式发布；部署前仍须核对同一提交的 `verify` 和 `publish-images` 均成功，并重新检查 L5 资源与数据库迁移影响。阶段六迁移 V8–V12 为新增配置存储/审计表及可空关联字段；迁移通过 Flyway 随 Worker 启动执行，当前没有 PostgreSQL 备份/恢复能力。不要把应用回滚视作数据库回滚；迁移后旧版本是否可启动需单独验证，失败时优先保留现场并前向修复。CLI 子命令和参数以 [README 配置发布说明](../../README.md#agent-配置版本与发布阶段六) 为准。
+
+### 使用已验证分支构建部署 L5 候选 Worker
+
+先在 GitHub Actions 确认目标分支同一个完整 commit SHA 的 `verify` 与 `publish-images` 均成功。PR 的 `verify` 通过本身不代表候选镜像已发布。候选只供受控 L5 集成验证；`main` 审批、CI 和正式发布规则不变。
+
+在本机设置要部署的 40 位提交 SHA，并从 Actions 的 `publish-images` 作业摘要复制完整候选标签（包含 run ID 与 attempt，避免重跑覆盖标签）。确认 GHCR 中候选镜像的 `org.opencontainers.image.revision` 与 SHA 一致，并下载 amd64 版本：
+
+```bash
+SHA=REPLACE_WITH_40_CHAR_COMMIT_SHA
+TAG=REPLACE_WITH_FULL_TAG_FROM_ACTIONS_SUMMARY
+IMAGE="ghcr.io/ly416123/myai-agent:${TAG}"
+docker buildx imagetools inspect "$IMAGE"
+docker pull --platform=linux/amd64 "$IMAGE"
+test "$(docker image inspect "$IMAGE" --format='{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
+ARCHIVE="/tmp/myai-agent-candidate-${SHA}.tar"
+docker save --platform=linux/amd64 --output "$ARCHIVE" "$IMAGE"
+scp "$ARCHIVE" "ly@192.168.122.55:/tmp/"
+ssh ly@192.168.122.55 "sudo k3s ctr -n k8s.io images import /tmp/myai-agent-candidate-${SHA}.tar && sudo rm -f /tmp/myai-agent-candidate-${SHA}.tar"
+rm -f "$ARCHIVE"
+```
+
+导入前后都不输出或传输密钥。部署前按本手册第 1 节重新检查 L5 Node、MyAI Pods、PVC 和 events，并通过 `ssh ly@192.168.122.55 'df -h /'` 检查节点根卷；候选镜像只更改 MyAI Worker，不修改其他命名空间。确认 Node Ready、当前 Worker 2/2 Ready、相关 PVC Bound 且资源余量满足后，执行受控滚动：
+
+```bash
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/l5-k3s.yaml}"
+CTX=l5
+NS=myai
+SHA=REPLACE_WITH_40_CHAR_COMMIT_SHA
+TAG=REPLACE_WITH_FULL_TAG_FROM_ACTIONS_SUMMARY
+IMAGE="ghcr.io/ly416123/myai-agent:${TAG}"
+kubectl --context "$CTX" -n "$NS" set image deploy/myai-agent-worker "agent-worker=$IMAGE"
+kubectl --context "$CTX" -n "$NS" rollout status deploy/myai-agent-worker --timeout=180s
+kubectl --context "$CTX" -n "$NS" get deploy,pods -o wide
+kubectl --context "$CTX" -n "$NS" get deploy myai-agent-worker -o jsonpath='{.spec.template.spec.containers[?(@.name=="agent-worker")].image}{"\n"}'
+kubectl --context "$CTX" -n "$NS" exec myai-postgres-0 -- psql -U myai -d myai -Atc "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1;"
+```
+
+确认 2 个 Worker Ready、Deployment 镜像与候选 SHA 相符，再按数据库只读检查确认 Flyway 已迁移至 V12。若新 Pod 未 Ready，不要提交新 Run，也不要删除旧 ReplicaSet 或 PVC；记录事件和安全日志并优先前向修复。由于当前 Flyway 版本历史与数据库状态可能阻止旧镜像重新启动，不得在未验证兼容性的情况下直接回滚旧应用镜像。候选验收完成并合入 `main` 后，正式 SHA 镜像由默认分支工作流发布；再将 L5 切换到正式镜像并核对运行摘要。若 PR 尚未满足审批，L5 可以继续使用已验收候选镜像，不需要为等待审批而回退。
+
+建议按以下顺序操作：创建不可变 Revision，运行关联的离线评测并查看门禁结果；只有门禁通过才会生成 Release；由操作者显式记录审批后，才可激活或灰度；使用 `current`、`history`、`run <runId>` 和 `gate-attempts` 复核变更及 Run 快照。激活和回滚使用数据库版本 CAS；并发冲突时命令应失败，由操作者重新读取当前状态后再决定，不要直接改数据库表。配置差异输出经过字段过滤，但发布前仍需人工复核 Prompt、Skill 和参数内容。
+
+当前 CLI 操作者 `local-cli` 未认证。审批记录是不可变的流程审计，不等于身份认证、双人审批或生产授权；配置发布命令仅可在受控终端使用。Revision 的凭据只接受 `secret://` 引用，明文 Secret 不应进入配置文件、发布说明或审计原因。常见凭据字面量检测不是完整的 Secret 扫描。
+
+自动回滚默认关闭。只有显式设置 `AGENT_CONFIG_AUTO_ROLLBACK_ENABLED=true` 才启用；其他默认值为：最小样本数 `10`、失败率阈值 `0.5`、观察窗口 `PT15M`、冷却期 `PT30M`、扫描上限 `1000`、检查间隔与初始延迟均为 `PT30S`。阈值统计灰度候选 Release 的 SUCCEEDED/PARTIAL/FAILED Run，不能代表语义质量。样本不足、扫描结果达到上限或冷却期内不会做出回滚决定。要启用前须由运行负责人评估环境流量与阈值，再通过部署配置显式设置；不建议仅为本地测试打开定时器。
+
+2026-11-17 阶段六候选镜像已完成一次 L5 受控部署验收：分支 push 的 `verify` 与 `publish-images` 均成功；候选 Runtime 镜像 revision label 与提交 `a4c7e254aefc05221bf02a09d5bbc126e148111e` 一致；滚动后 Worker 2/2 Ready、无新 Pod 重启，Flyway V8–V12 成功并到 V12，Prometheus Ready、Collector 与 Tempo targets 均 UP。部署前节点 Ready、MemoryPressure/DiskPressure 为 False，Worker 2/2 Ready，相关 PVC Bound；本次只修改 MyAI Worker Deployment。此验收只证明当前候选版本在 L5 的基础运行状态，不代表 PR 已合入或正式 main 镜像已发布。后续正式部署仍需重新核对节点、PVC、Pod requests/limits、数据库迁移边界及镜像来源；本项目当前没有数据库备份/恢复流程，不能把应用回滚等同于数据库回滚。

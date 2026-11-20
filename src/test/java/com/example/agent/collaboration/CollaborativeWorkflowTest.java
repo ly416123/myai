@@ -20,6 +20,12 @@ import com.example.agent.workflow.RunType;
 import com.example.agent.workflow.StepKind;
 import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.RunStoreUnavailableException;
+import com.example.agent.configuration.AgentConfigDocument;
+import com.example.agent.configuration.AgentConfigRelease;
+import com.example.agent.configuration.AgentConfigRevision;
+import com.example.agent.configuration.ModelSettings;
+import com.example.agent.configuration.RunConfigurationSnapshot;
+import com.example.agent.configuration.RuntimeSettings;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -46,6 +52,34 @@ import static org.mockito.Mockito.spy;
 
 class CollaborativeWorkflowTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void refusesToStartRunWhenPinnedWorkerContractVersionIsUnavailable() throws Exception {
+        ToolRegistry tools = tools();
+        WorkerRegistry workers = contractWorkers();
+        AtomicInteger modelCalls = new AtomicInteger();
+        ModelClient model = (messages, definitions) -> {
+            modelCalls.incrementAndGet();
+            throw new AssertionError("Invalid pinned configuration must be rejected before model access");
+        };
+        var document = new AgentConfigDocument(1, "Pinned prompt", List.of(),
+                new ModelSettings("deepseek", "deepseek-flash", java.util.Map.of(), "secret://providers/deepseek"),
+                Set.of("weather"), java.util.Map.of("weather", "v2"),
+                new RuntimeSettings(6, 4, 0, 30_000, 10_000, 4, 1));
+        var revision = AgentConfigRevision.create(document, JSON);
+        var release = new AgentConfigRelease("release-pinned", revision.revisionId(), revision.contentHash(),
+                "eval-pinned", null, JSON.createObjectNode().put("passed", true), null, "test", "test", java.time.Instant.now());
+        var snapshot = RunConfigurationSnapshot.from(release, revision);
+        var store = new InMemoryRunStore();
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, workers, store,
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)),
+                    JSON, AgentTelemetry.noop(), RunLeasePolicy.DEFAULT, null, null, null, snapshot);
+            assertThrows(IllegalStateException.class, () -> workflow.runTracked("Check Beijing weather"));
+            assertEquals(0, modelCalls.get());
+            assertTrue(store.list().isEmpty());
+        }
+    }
 
     @Test
     void versionedWorkerReceivesOnlyBoundInputAndStoresValidatedStructuredOutput() throws Exception {

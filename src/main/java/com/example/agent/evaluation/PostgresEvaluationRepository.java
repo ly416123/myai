@@ -38,12 +38,13 @@ public final class PostgresEvaluationRepository implements EvaluationRepository 
             var d = run.dataset(); var a = run.aggregate();
             jdbc.update("""
                     INSERT INTO evaluation_run(evaluation_id,status,dataset_id,dataset_version,dataset_hash,
-                    dataset_format_version,git_commit,workflow_mode,provider,model,evaluator_versions,model_call_budget,
+                    dataset_format_version,git_commit,workflow_mode,provider,model,configuration_hash,evaluator_versions,model_call_budget,
                     tool_call_budget,max_cases,created_at,deadline_at,total_cases,completed_cases,passed_cases,failed_cases,
                     model_calls,tool_calls,prompt_tokens,completion_tokens,estimated_cost_usd,failure_category)
-                    VALUES(?,?,?,?,?,?, ?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?, ?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     run.evaluationId(), run.status().name(), d.datasetId(), d.datasetVersion(), d.contentHash(),
-                    d.formatVersion(), run.gitCommit(), run.workflowMode(), run.provider(), run.model(), json(run.evaluatorVersions()),
+                    d.formatVersion(), run.gitCommit(), run.workflowMode(), run.provider(), run.model(), run.configurationHash(),
+                    json(run.evaluatorVersions()),
                     run.modelCallBudget(), run.toolCallBudget(), run.maxCases(), ts(run.createdAt()), ts(run.deadlineAt()),
                     caseIds.size(), a.completedCases(), a.passedCases(), a.failedCases(), a.modelCalls(), a.toolCalls(),
                     a.promptTokens(), a.completionTokens(), a.estimatedCostUsd(), run.failureCategory());
@@ -203,7 +204,8 @@ public final class PostgresEvaluationRepository implements EvaluationRepository 
                 (Long) rs.getObject("prompt_tokens"), (Long) rs.getObject("completion_tokens"), rs.getBigDecimal("estimated_cost_usd"));
         return new EvaluationRunRecord(rs.getString("evaluation_id"), EvaluationRunStatus.valueOf(rs.getString("status")),
                 dataset, rs.getString("git_commit"), rs.getString("workflow_mode"), rs.getString("provider"),
-                rs.getString("model"), parse(rs.getString("evaluator_versions"), VERSIONS), rs.getInt("model_call_budget"),
+                rs.getString("model"), rs.getString("configuration_hash"),
+                parse(rs.getString("evaluator_versions"), VERSIONS), rs.getInt("model_call_budget"),
                 rs.getInt("tool_call_budget"), rs.getInt("max_cases"), instant(rs.getTimestamp("created_at")),
                 instant(rs.getTimestamp("deadline_at")), instant(rs.getTimestamp("completed_at")), aggregate,
                 rs.getString("failure_category"));

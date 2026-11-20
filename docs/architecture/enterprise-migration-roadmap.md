@@ -127,7 +127,6 @@ Run Observation 已在单 Agent 与 Supervisor 执行期间保持 scope；模型
 | P1：运行存储与基础观测 | PostgreSQL/Flyway、事务写入、乐观版本、原子 claim、租约/fencing、取消标志、结构化日志、Run/step 与队列指标、Hikari 指标、OTel/OTLP 已接入。终态 Run 清理能力存在，但默认关闭；数据库/Trace 备份与恢复功能已按用户决定从本地源码期望状态和 L5 移除。 | Testcontainers 覆盖迁移、读写、并发 claim、旧 fencing token 拒写、版本冲突、事务回滚、清理级联与审计；OTLP Collector 集成验证 traces/metrics 和指标命名。L5 PostgreSQL 启用 TLS，Worker 通过 `verify-full` 校验；Prometheus/Tempo 本地 PVC 均为单节点存储。2026-11-16 复核确认 Prometheus 十条规则健康、2/2 targets UP、无活动告警；Tempo ready、Grafana 数据库健康，通知接收端暂缓。当天全部 Pod 曾随主机停止后恢复，当前均 Ready；节点或 PVC 故障仍可能造成持久 Run/Checkpoint/Trace 丢失。
 | P2：协作调度 | 子任务表有数据库原子 claim、父/子 fencing 及父 Run 更换 owner 后立即重领；Run 级共享模型/工具预算使用数据库事务、父 Run 行锁与稳定 reservation ID 做原子、幂等预留，避免过量分配和重复计费。持久 Run Worker 和子任务 Worker 均可跨实例轮询领取工作；Supervisor 以 PostgreSQL 中的任务状态等待结果。CLI 默认本地执行，Worker 部署可显式切换数据库队列路径。 | Fake Store、PostgreSQL 和确定性模型测试覆盖活跃父 Run 扫描、竞争 claim、续租、父 Run refence 后立即重领和旧 token 失效、子任务依赖/检查点/取消以及共享预算。L5 在途 Run 多 Pod 崩溃恢复演练已通过；当前工具仅有本地计算、时间查询和模拟天气，没有外部副作用工具；未来添加此类工具前须逐项定义幂等、补偿和审计策略。MQ 按负载条件评估，不默认部署。 |
 | P2：可靠性与数据治理 | 工具调用未知副作用不自动重放；终态 Run 可按配置保留周期清理，删除操作有不含敏感运行数据的审计记录。工具调用状态变更已有独立追加式审计表及 CLI 查询，审计记录不含参数、结果或异常原文，并与 Run 保留删除级联。按用户当前决策，不重建数据库备份/恢复能力；L5 既有归档 PVC/PV 和归档数据已删除。当前没有外部副作用工具；未来此类工具的幂等/补偿协议须作为上线门槛。技术字段与存储流向已盘点，业务数据分类、删除请求流程尚未确认；详见[技术数据盘点](../security/data-inventory.md)。节点/数据卷损坏可能造成持久 Run 数据丢失。 | Run 清理单元与 PostgreSQL 级联/审计集成测试通过。备份/恢复脚本与保留测试已随用户决策移除，之前的手动加密备份与隔离恢复仅属于历史验证。继续明确 exactly-once 限制，并按工具逐项定义幂等、补偿或人工核对方式。 |
-| P2：Worker 契约（阶段五，范围验收通过） | 静态 WorkerSpec 具备版本、输入/输出 JSON Schema 和短能力摘要；TaskPlan/ChildTaskRecord 持久化输入绑定、验收标准、Worker 版本与已解析输入；运行前校验、结构化输出校验、版本不匹配 fail closed、脱敏机器可读错误、恢复/存储往返测试均已完成。 | 218 项本机测试通过，GitHub Actions `verify` 成功；L5 SHA 标签 Worker 2/2 Ready、schema V7 且 Run 数量/状态未变。见[阶段五总结](../stages/phase-05-summary.html)和[实施计划](../plans/phase-05-implementation-plan.md)。本分支未运行默认分支专属镜像发布；L5 使用同提交的本机 Docker 构建归档导入，未声称是 GHCR/CI 发布镜像。无动态注册、真实身份/授权、父文本语义来源证明或 exactly-once 保证；不得称为生产就绪。|
 | P2：评测与交付验收 | Fake/Provider Stub、固定评测集与显式真实评测 Runner 已提供；CI 工作流含全历史凭据扫描、测试、告警规则测试、容器构建/扫描、配置扫描和默认分支推送后的镜像发布；Action SHA、基础镜像 digest 与 Dependabot 更新监测已配置。 | 固定 CI 样例不依赖真实模型；GitHub Actions run `43799525352` 对代码提交 `7a9d0df` 的 `verify` 与 `publish-images` 均成功，本机完整 `clean verify` 180 项通过。GHCR Runtime index digest 为 `sha256:9dc54d027067967fbdb561616d896eb416725dc971b52fed555b1bfb0535ff91`，代理 index digest 为 `sha256:3a4a678134f4dfc57c53c170aba5a4bcee57dc2eeb87238c2ac47ffd06cf448a`；两个 SHA 标签均可读取且含 `linux/amd64` manifest。首次 GHCR 登录返回 `denied`，重跑发布 Job 成功；未确认首次拒绝原因。GitHub `main` 已设置分支保护：PR 至少 1 个审批、必须通过 `verify` 且分支保持最新、解决全部讨论，禁止强制推送和删除；管理员不强制执行保护规则。此次直接推送绕过了 PR/必需状态检查要求，CI 随后通过。真实模型评测 5/5 只匹配编码断言，不构成整体质量证明；人工评分和业务单价仍缺。|
 | P1：评测实验生命周期（阶段四，2026-11-16） | 版本化数据集身份与规范化哈希、Evaluator ID/version（含 JSON Schema 与预期失败类别）、PostgreSQL/Flyway V7 实验与 case 状态、增量评分、owner lease/heartbeat/fence、中断未知结果收敛、兼容比较、脱敏 JSON 导出和 `/eval` CLI 已实现。无自动清理；真实 Provider 仍须显式启用，普通 CI 使用 Fake。 | `mvn clean verify` 204 项通过、0 失败/错误/跳过；Postgres/OTel Testcontainers 实际执行。`image-digests-test.sh`、L5 Kustomize 渲染及 `git diff --check` 通过。阶段验收时 Docker 告警测试被镜像层拉取阻塞；2026-11-16 后续使用固定 SHA-256 的官方 Prometheus v3.16.0 macOS ARM64 `promtool` 运行同一规则测试，10 条规则成功，新增 macOS 原生校验归档路径，容器路径保留用于 CI/其他平台。L5 API 当时不可达，未部署；源码 V7 尚未发布到 L5，现场最近已确认数据库 schema v6。详见[阶段四总结](../stages/phase-04-summary.html)，不得把本地功能验收描述为已部署或生产就绪。|
 
@@ -141,11 +140,21 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 
 ### 阶段五启动前置里程碑：完成阶段四交付闭环
 
-**状态：已完成（2026-11-17）。** 阶段四交付提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机验收、该提交对应的 GitHub Actions `verify`/`publish-images`、GHCR 镜像 amd64 manifest 核验和 L5 Worker 部署均已完成。L5 成功运行 Flyway V7；评测表可查询；Worker 2/2 Ready，PostgreSQL 与观测组件健康，已有 12 条 Run 及其状态分布保持不变。部署时通过归档导入 GHCR Runtime 镜像；L5 CRI 将镜像呈现为本地生成的 `docker.io/library/import-2026-11-17:fe20935` 名称，Deployment 声明仍使用不可变 GHCR SHA 标签，镜像配置摘要与 GHCR 的 amd64 manifest 配置匹配。详细命令、指标和限制见[阶段四总结](../stages/phase-04-summary.html)。该里程碑已关闭阶段五的启动前置条件；阶段五 Worker 契约迭代正在实施中。
+**状态：已完成（2026-11-17）。** 阶段四交付提交 `fe209355ddfcce9538b911a4b94ac3517a575b1d` 的本机验收、对应 GitHub Actions `verify`/`publish-images`、GHCR 镜像 amd64 manifest 核验和 L5 Worker 部署均已完成。L5 成功运行 Flyway V7；评测表可查询；Worker 2/2 Ready，PostgreSQL 与观测组件健康，已有 12 条 Run 及其状态分布保持不变。详细证据见[阶段四总结](../stages/phase-04-summary.html)。该里程碑已关闭阶段五启动前置条件。
 
-### 后续可继续实施
+### 阶段五：Worker 契约
 
-- 阶段五 Worker 契约已通过范围验收，交付事实见[阶段五总结](../stages/phase-05-summary.html)。下一阶段须先明确目标和验收范围；动态 Worker 实例注册、能力池负载均衡、HTTP API/生产认证授权等仍是待需求确认的工程方向，不因阶段五完成而自动纳入。
+**状态：功能验收通过并已合入 `main`（2026-11-17）。** Worker 版本化输入/输出契约、派发前输入绑定校验、结果 Schema 校验和恢复契约版本校验均已实现。本机 218 项测试通过，PR #9 对应 GitHub Actions `verify` 通过，L5 Worker 2/2 Ready；详情见[阶段五总结](../stages/phase-05-summary.html)。这表示阶段五已完成，不表示整个项目已生产就绪。
+
+### 阶段六：Agent 配置版本、发布与运行时切换（2026-11-17，本机功能验收通过）
+
+需求与范围见[阶段六需求](../plans/phase-06-requirements.md)，验收证据见[阶段六总结](../stages/phase-06-summary.html)。本机 `mvn --batch-mode --no-transfer-progress clean verify` 通过：257 项测试，0 失败、0 错误、0 跳过；Testcontainers PostgreSQL 实际执行迁移至 V12，并验证配置切换和 Run 快照固定。已实现 PostgreSQL 不可变 Revision/Release、离线 Evaluation 门禁与追加式门禁尝试审计、独立审批记录、激活 CAS/灰度/手工回滚、每个 Run 固定配置快照、运行时配置应用、配置历史与脱敏差异 CLI，以及可选自动回滚。阶段六分支提交 `5de8b6f` 的 GitHub Actions `verify` 已通过；`publish-images` 仅在默认分支执行，尚未发布镜像；L5 部署仍未执行。
+
+自动回滚默认关闭，按环境与 Agent 配置启用；固定延迟检查使用有界最近 Run 页，样本不足、扫描页饱和、冷却期或数据异常时不执行决策。只统计候选版本窗口内 SUCCEEDED/PARTIAL/FAILED Run，取消/未完成任务排除；达阈值后通过 Assignment 版本 CAS 移除候选并追加事件。灰度只按稳定 Run ID 分桶，不声称用户级粘性。配置引用与哈希不一致或静态工具/Worker 版本缺失时拒绝创建新 Run；已有 Run 与恢复使用其检查点快照。
+
+配置版本与门禁均保存在 PostgreSQL。发布门禁通过或拒绝记录和激活/回滚事件分开存储；明文凭据字段不可表达，提示词、Skill 和审计文本另有常见凭据字面量拒绝规则，但该规则不替代内容审查。自动回滚是以 Run 终态失败率作为确定性操作阈值，不是模型语义质量评测或生产质量保证。HTTP API、生产身份认证授权、用户/租户灰度和在线 Trace 评测仍暂缓/不在范围内；L5 部署、GitHub Actions 和镜像发布尚未对阶段六变更实施。
+
+### 当前可继续实施
 
 - 持续维护本地 CI 门禁、测试、镜像构建和 L5 功能回归。GHCR Actions 权限、镜像发布/读取验证与 `main` 分支保护已完成。2026-11-16 已通过 L5 kubeconfig 重新获得集群只读/操作访问；当日核验节点和 MyAI 工作负载均 Ready，后续 L5 回归按本路线图的资源边界执行。
 - 继续验证现有单 Agent/协作任务流程、数据库租约恢复、可观测链路与确定性评测；任何发现的功能缺陷仍按常规修复。

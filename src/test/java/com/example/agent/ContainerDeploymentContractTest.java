@@ -447,6 +447,27 @@ class ContainerDeploymentContractTest {
         assertFalse(workflow.contains("kube-state-metrics"));
     }
 
+    @Test
+    void verifiedBranchPushesPublishSeparatelyTaggedCandidateImages() throws Exception {
+        String workflow = Files.readString(Path.of(".github/workflows/ci.yml"));
+        String publishJob = workflow.substring(workflow.indexOf("publish-images:"));
+
+        assertTrue(publishJob.contains("needs: verify"),
+                "Candidate images must not publish unless the verify job succeeds");
+        assertTrue(publishJob.contains("if: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}"),
+                "Tag pushes must not publish candidate images");
+        assertTrue(publishJob.contains("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}"));
+        assertTrue(publishJob.contains("refs/heads/$DEFAULT_BRANCH"),
+                "The default branch must be distinguishable from candidate branches");
+        assertTrue(publishJob.contains("candidate-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"),
+                "Each non-default branch workflow attempt must have a unique candidate tag");
+        assertTrue(publishJob.contains("GITHUB_STEP_SUMMARY"),
+                "The exact candidate image tags must be visible in the workflow summary");
+        assertTrue(publishJob.contains("image_tag=\"$GITHUB_SHA\""),
+                "The default branch must retain its canonical commit SHA image tag");
+        assertTrue(publishJob.contains("docker push"));
+    }
+
     private static void assertWorkflowStepExitCode(String workflow, String stepName, String expectedExitCode,
                                                    int expectedOccurrences) {
         String marker = "      - name: " + stepName;

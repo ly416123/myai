@@ -1,0 +1,34 @@
+{
+  "formatVersion": 1,
+  "systemPrompt": "You are a helpful assistant. Use available tools when they are relevant.",
+  "skills": [],
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "parameters": {
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "max_tokens": 2048
+    },
+    "credentialRef": "secret://providers/deepseek"
+  },
+  "allowedTools": [
+    "calculator",
+    "current_time",
+    "weather"
+  ],
+  "workerContractVersions": {
+    "calculator": "v1",
+    "clock": "v1",
+    "weather": "v1"
+  },
+  "runtime": {
+    "maxModelCalls": 10,
+    "maxToolCalls": 20,
+    "maxModelRetries": 2,
+    "taskTimeoutMillis": 300000,
+    "toolTimeoutMillis": 10000,
+    "maxTasks": 8,
+    "maxParallelism": 2
+  }
+}

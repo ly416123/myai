@@ -124,14 +124,22 @@ public final class DeepSeekModelClient implements ModelClient {
 
     @Override
     public ModelResponse complete(List<Message> messages, List<ToolDefinition> tools) {
+        return complete(messages, tools, new ModelRequestOptions(model, java.util.Map.of()));
+    }
+
+    @Override
+    public ModelResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
         // DeepSeek 的 Chat Completions 工具调用按非思考模式发送。
         // 工具列表保持为标准 function tool 结构，使 Runtime 可继续使用厂商无关类型。
-        var params = ChatCompletionCreateParams.builder().model(model)
+        String requestedModel = options == null ? model : options.model();
+        var params = ChatCompletionCreateParams.builder().model(requestedModel)
                 .putAdditionalBodyProperty("thinking", JsonValue.from(java.util.Map.of("type", "disabled")));
+        if (options != null) options.parameters().forEach((name, value) ->
+                params.putAdditionalBodyProperty(name, JsonValue.from(value)));
         for (Message message : messages) params.addMessage(toSdkMessage(message));
         for (ToolDefinition tool : tools) params.addTool(toSdkTool(tool));
 
-        log.debug("Sending chat completion request: model={}, messages={}, tools={}", model, messages.size(), tools.size());
+        log.debug("Sending chat completion request: model={}, messages={}, tools={}", requestedModel, messages.size(), tools.size());
         final ChatCompletion completion;
         try {
             completion = client.chat().completions().create(params.build());

@@ -104,12 +104,18 @@ class DeepSeekModelClientContractTest {
                     {"type":"object","properties":{"city":{"type":"string"}}}
                     """);
             ModelResponse response = client.complete(List.of(Message.user("查天气")), List.of(
-                    new ToolDefinition("weather", "weather tool", schema)));
+                    new ToolDefinition("weather", "weather tool", schema)),
+                    new ModelRequestOptions("deepseek-next", java.util.Map.of("temperature", 0.2,
+                            "top_p", 0.8, "max_tokens", 256)));
 
             assertEquals("/chat/completions", requestPath.get());
             assertEquals("Bearer test-only-secret", authorization.get());
-            assertEquals("deepseek-flash", JSON.readTree(requestBody.get()).path("model").asText());
-            assertEquals(1, JSON.readTree(requestBody.get()).path("tools").size());
+            var sentBody = JSON.readTree(requestBody.get());
+            assertEquals("deepseek-next", sentBody.path("model").asText());
+            assertEquals(0.2, sentBody.path("temperature").asDouble());
+            assertEquals(0.8, sentBody.path("top_p").asDouble());
+            assertEquals(256, sentBody.path("max_tokens").asInt());
+            assertEquals(1, sentBody.path("tools").size());
             assertEquals(2, response.toolCalls().size());
             assertEquals("call-1", response.toolCalls().getFirst().id());
             assertEquals("calculator", response.toolCalls().getFirst().name());

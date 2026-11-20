@@ -10,6 +10,8 @@ import com.example.agent.evaluation.AgentEvaluationConfig;
 import com.example.agent.evaluation.AgentEvaluationRunner;
 import com.example.agent.evaluation.EvaluationService;
 import com.example.agent.evaluation.EvaluationRepository;
+import com.example.agent.configuration.AgentConfigurationService;
+import com.example.agent.configuration.ReleaseApproval;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -26,6 +28,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 
 class MainTest {
     @Test
@@ -121,6 +124,31 @@ class MainTest {
 
         assertTrue(output.toString(StandardCharsets.UTF_8).contains("未知命令"));
         verifyNoInteractions(runtime);
+    }
+
+    @Test
+    void configCommandPreservesFullApprovalAndActivationReasons() throws Exception {
+        AgentConfigurationService service = mock(AgentConfigurationService.class);
+        AgentProperties properties = new AgentProperties();
+        when(service.current(properties.getConfigurationEnvironment(), properties.getConfigurationAgentId()))
+                .thenReturn(null);
+        when(service.approveRelease(eq("release-1"), eq("local-cli"), eq("reviewed by release operator"),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new ReleaseApproval("release-1", "local-cli",
+                "reviewed by release operator", java.time.Instant.now()));
+        var main = new Main(mock(AgentRuntime.class), mock(CollaborativeWorkflow.class), new InMemoryRunStore(),
+                properties, mock(RunSubmissionService.class), runId -> java.util.List.of(),
+                mock(AgentEvaluationRunner.class), evaluationConfig(), mock(EvaluationService.class),
+                mock(EvaluationRepository.class), new ObjectMapper(), service);
+        var command = Main.class.getDeclaredMethod("executeConfigurationCommand", String.class);
+        command.setAccessible(true);
+
+        command.invoke(main, "approve release-1 reviewed by release operator");
+        command.invoke(main, "activate release-1 initial approved rollout");
+
+        verify(service).approveRelease(eq("release-1"), eq("local-cli"), eq("reviewed by release operator"),
+                org.mockito.ArgumentMatchers.any());
+        verify(service).activate(eq(properties.getConfigurationEnvironment()), eq(properties.getConfigurationAgentId()),
+                eq("release-1"), eq(0L), eq("local-cli"), eq("initial approved rollout"));
     }
 
     private static AgentEvaluationConfig evaluationConfig() {

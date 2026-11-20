@@ -2,6 +2,12 @@ package com.example.agent.evaluation;
 
 import com.example.agent.collaboration.CollaborationConfig;
 import com.example.agent.collaboration.WorkerRegistry;
+import com.example.agent.client.ModelClient;
+import com.example.agent.client.ModelRequestOptions;
+import com.example.agent.configuration.AgentConfigDocument;
+import com.example.agent.configuration.AgentConfigRevision;
+import com.example.agent.configuration.ModelSettings;
+import com.example.agent.configuration.RuntimeSettings;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.observability.AgentTelemetry;
 import com.example.agent.tool.ToolExecutor;
@@ -18,10 +24,52 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class EvaluationServiceTest {
+    @Test void associatesFakeEvaluationWithTheConfigurationRevisionHash(@TempDir Path output) {
+        var repo = new FakeRepository();
+        var tools = new ToolRegistry();
+        var revision = AgentConfigRevision.create(new AgentConfigDocument(1, "candidate system prompt", List.of(),
+                new ModelSettings("deepseek", "candidate-model", Map.of("temperature", 0.3),
+                        "secret://deepseek/api-key"), Set.of(), Map.of(),
+                new RuntimeSettings(4, 4, 0, 60_000, 10, 2)), new ObjectMapper().findAndRegisterModules());
+        AtomicReference<List<com.example.agent.model.Message>> modelMessages = new AtomicReference<>();
+        AtomicReference<ModelRequestOptions> modelOptions = new AtomicReference<>();
+        ModelClient fakeModel = new ModelClient() {
+            @Override public ModelResponse complete(List<com.example.agent.model.Message> messages,
+                                                    List<com.example.agent.model.ToolDefinition> definitions) {
+                return new ModelResponse("synthetic response", List.of(), 3L, 2L);
+            }
+            @Override public ModelResponse complete(List<com.example.agent.model.Message> messages,
+                    List<com.example.agent.model.ToolDefinition> definitions, ModelRequestOptions options) {
+                modelMessages.set(List.copyOf(messages));
+                modelOptions.set(options);
+                return new ModelResponse("synthetic response", List.of(), 3L, 2L);
+            }
+        };
+        try (var executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var runner = new AgentEvaluationRunner(fakeModel, tools, executor, new WorkerRegistry(), new InMemoryRunStore(), RuntimeConfig.defaults(4),
+                    CollaborationConfig.defaults(), new ObjectMapper().findAndRegisterModules(), AgentTelemetry.noop());
+            var service = new EvaluationService(repo, runner, EvaluationEvaluatorRegistry.defaults(), "fake-commit", AgentTelemetry.noop());
+            var dataset = new AgentEvaluationDataset("revision-v1", List.of(new AgentEvaluationScenario(
+                    "case-1", EvaluationWorkflow.SINGLE_AGENT, "synthetic prompt", List.of())));
+            var snapshot = new AgentEvaluationDatasetSnapshot("revision-dataset", 1, "a".repeat(64), dataset);
+
+            var result = service.runForConfiguration(snapshot, revision, config(output), "fake", "single");
+
+            assertEquals(revision.contentHash(), result.configurationHash());
+            assertEquals(revision.contentHash(), repo.find(result.evaluationId()).orElseThrow().run().configurationHash());
+            assertEquals("candidate system prompt", modelMessages.get().getFirst().content());
+            assertEquals("candidate-model", modelOptions.get().model());
+            assertEquals(0.3, ((Number) modelOptions.get().parameters().get("temperature")).doubleValue());
+        }
+    }
+
     @Test void fakeModelEvaluationPersistsPerCaseAndTerminalOutcome(@TempDir Path output) {
         var repo = new FakeRepository();
         var tools = new ToolRegistry();
@@ -115,7 +163,8 @@ class EvaluationServiceTest {
         private static EvaluationRunRecord copy(EvaluationRunRecord r, EvaluationRunStatus status, Instant ended,
                                                 EvaluationAggregate aggregate) {
             return new EvaluationRunRecord(r.evaluationId(), status, r.dataset(), r.gitCommit(), r.workflowMode(),
-                    r.provider(), r.model(), r.evaluatorVersions(), r.modelCallBudget(), r.toolCallBudget(), r.maxCases(),
+                    r.provider(), r.model(), r.configurationHash(), r.evaluatorVersions(),
+                    r.modelCallBudget(), r.toolCallBudget(), r.maxCases(),
                     r.createdAt(), r.deadlineAt(), ended, aggregate, null);
         }
     }

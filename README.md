@@ -15,8 +15,10 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段四实现计划](docs/plans/phase-04-implementation-plan.md)
 - [阶段四：评测生命周期与可比较结果（功能验收、GitHub Actions 与 L5 交付闭环通过）](docs/stages/phase-04-summary.html)
 - [阶段五需求：Worker 能力注册与子任务数据契约](docs/plans/phase-05-requirements.md)
-- [阶段五实施计划（Worker 契约，已验收）](docs/plans/phase-05-implementation-plan.md)
-- [阶段五：版本化 Worker 输入/输出契约（范围验收通过）](docs/stages/phase-05-summary.html)
+- [阶段五验收总结：版本化 Worker 输入/输出契约](docs/stages/phase-05-summary.html)
+- [阶段六验收总结：Agent 配置版本、发布与运行时切换（本机、GitHub Actions 与 L5 候选部署验收通过；PR 等待审批）](docs/stages/phase-06-summary.html)
+- [阶段六需求与范围](docs/plans/phase-06-requirements.md)
+- [记忆能力候选规划（阶段六之后）](docs/plans/memory-capabilities-roadmap.md)
 
 每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。阶段总结中的架构图是各阶段验收时点的历史快照，不代表当前企业架构的完整形态，可分别查看：[阶段一历史快照](docs/stages/phase-01-summary.html#architecture)、[阶段二历史快照](docs/stages/phase-02-summary.html#architecture)、[阶段三历史快照](docs/stages/phase-03-summary.html#architecture)。当前企业化架构与交付状态以[升级路线图](docs/architecture/enterprise-migration-roadmap.md)为准。详见项目根目录的 `AGENTS.md`。
 
@@ -66,7 +68,7 @@ L5 的只读诊断、告警检查、Run 恢复原则、Worker 版本回滚和数
     mvn -DskipTests package
     docker build -t myai-agent:dev .
 
-短期 CLI 之外提供 `once` 单任务进程模式，供受控批任务调用；任务正文通过 `AGENT_TASK` 环境变量传入。API Key 由只读 Secret 卷挂载为文件，容器通过 `DEEPSEEK_KEY_FILE` 读取；Pod `fsGroup` 与 Secret 文件 `0440` 权限允许 UID 10001 的非 root 进程读取，不把 API Key 放入进程环境。示例 Job 位于 `deploy/k8s/base/agent-task-job.yaml`。GitHub Actions 默认分支验证成功后，会把应用和模型出站代理镜像推送到 `ghcr.io/<owner>/myai-agent:<commit-sha>` 与 `ghcr.io/<owner>/myai-model-egress-proxy:<commit-sha>`，部署清单需替换成实际 GHCR 地址和不可变 commit SHA。通用模板引用 `myai-registry` 镜像拉取 Secret；L5 overlay 使用预导入镜像。需创建 `myai-runtime` ConfigMap、`myai-agent-task`、`myai-provider`、`myai-database` 和 `myai-postgres-tls` Secrets。数据库连接配置必须将 JDBC `sslmode=verify-full` 与 `sslrootcert` 路径指向只读 CA 文件。使用本仓库 PostgreSQL StatefulSet 时，TLS Secret 还需包含与 CA 对应的 `tls.crt`、`tls.key`；连接外部 PostgreSQL 时只向应用 Pod 提供受信任的 `ca.crt`，服务器证书私钥不得挂载到应用容器。Provider Secret 可由本地文件创建，例如 `kubectl create secret generic myai-provider --from-file=deepseek-api-key=deepseek.key`。然后用 `kubectl create -f deploy/k8s/base/agent-task-job.yaml` 创建单次任务。任务 Secret 应按任务单独创建并限制读取权限，完成后删除；不要把任务正文写进 Git 清单或镜像。K3s Secret 静态加密已在 L5 启用并完成轮换核验；MyAI 默认 ServiceAccount 无 Secret 读取权限。对既有 token-refresh RoleBinding 的核查确认：权限仅限 `agentteams-chatgpt-oauth-session` 这一命名 Secret 的 get/patch；对应 Helm CronJob 当前 suspended，且没有运行中的 Pod，因此保留其 Helm 管理资源，不与 MyAI 工作负载混用。
+短期 CLI 之外提供 `once` 单任务进程模式，供受控批任务调用；任务正文通过 `AGENT_TASK` 环境变量传入。API Key 由只读 Secret 卷挂载为文件，容器通过 `DEEPSEEK_KEY_FILE` 读取；Pod `fsGroup` 与 Secret 文件 `0440` 权限允许 UID 10001 的非 root 进程读取，不把 API Key 放入进程环境。示例 Job 位于 `deploy/k8s/base/agent-task-job.yaml`。GitHub Actions 的 `verify` 成功后，同仓库 branch push 会发布独立的候选镜像标签 `candidate-<commit-sha>-<run-id>-<run-attempt>`；默认分支仍发布正式 `<commit-sha>` 标签。PR 事件只运行验证，不发布镜像。候选镜像可用于 L5 受控验收，不能视为主分支发布；L5 的 OCI 导入、SHA 校验和 Worker 滚动步骤见 [L5 运维手册](docs/operations/l5-runbook.md#使用已验证分支构建部署-l5-候选-worker)。通用模板引用 `myai-registry` 镜像拉取 Secret；L5 overlay 使用预导入镜像。需创建 `myai-runtime` ConfigMap、`myai-agent-task`、`myai-provider`、`myai-database` 和 `myai-postgres-tls` Secrets。数据库连接配置必须将 JDBC `sslmode=verify-full` 与 `sslrootcert` 路径指向只读 CA 文件。使用本仓库 PostgreSQL StatefulSet 时，TLS Secret 还需包含与 CA 对应的 `tls.crt`、`tls.key`；连接外部 PostgreSQL 时只向应用 Pod 提供受信任的 `ca.crt`，服务器证书私钥不得挂载到应用容器。Provider Secret 可由本地文件创建，例如 `kubectl create secret generic myai-provider --from-file=deepseek-api-key=deepseek.key`。然后用 `kubectl create -f deploy/k8s/base/agent-task-job.yaml` 创建单次任务。任务 Secret 应按任务单独创建并限制读取权限，完成后删除；不要把任务正文写进 Git 清单或镜像。K3s Secret 静态加密已在 L5 启用并完成轮换核验；MyAI 默认 ServiceAccount 无 Secret 读取权限。对既有 token-refresh RoleBinding 的核查确认：权限仅限 `agentteams-chatgpt-oauth-session` 这一命名 Secret 的 get/patch；对应 Helm CronJob 当前 suspended，且没有运行中的 Pod，因此保留其 Helm 管理资源，不与 MyAI 工作负载混用。
 
 Job 假定 PostgreSQL 已由独立服务提供；L5 的 `myai` PostgreSQL 基础资源当前由 `deploy/k8s/base/l5-postgres.yaml` 管理。Job 和 Worker 都关闭 Kubernetes ServiceAccount Token 自动挂载，因为它们不调用 Kubernetes API；后续若增加 Kubernetes API 操作，应创建最小权限专用 ServiceAccount/RBAC 后再开放。L5 仍是单节点受控集成环境，不提供节点级高可用能力。
 
@@ -88,6 +90,24 @@ CLI 命令：
 - /resume <runId>：从检查点恢复一个非终态运行。
 - /enqueue <任务>、/multi-enqueue <任务>：提交单 Agent 或协作 Run，由后台 Worker 异步消费。
 - /exit 或 /quit：退出。
+
+### Agent 配置版本与发布（阶段六）
+
+阶段六配置记录存于 PostgreSQL：不可变 Revision 保存系统提示词、Skill、模型参数、工具 allowlist、Worker 契约版本和运行预算；Release 关联内容哈希与离线 Evaluation；环境激活指针通过版本 CAS 更新并追加审计事件。新 Run 在提交时解析并固定配置快照，已有 Run 与恢复任务始终沿用快照。配置读取缺失或哈希错误时拒绝启动新 Run。
+
+从 `config/agent-config.example.json` 复制一份配置后，可以通过 CLI 参数或交互命令管理：
+
+    mvn spring-boot:run -Dspring-boot.run.arguments="--agent.config-command=revision config/agent-config.example.json"
+    mvn spring-boot:run -Dspring-boot.run.arguments="--agent.config-command=eval rev-<hash>"
+    mvn spring-boot:run -Dspring-boot.run.arguments="--agent.config-command=release rev-<hash> <evaluationId> - 首次发布"
+    mvn spring-boot:run -Dspring-boot.run.arguments="--agent.config-command=approve <releaseId> 已复核候选评测"
+    mvn spring-boot:run -Dspring-boot.run.arguments="--agent.config-command=activate <releaseId> 初始激活"
+
+Revision 的稳定 ID 是 `rev-<sha256>`。候选 Evaluation 通过阶段四固定离线数据集执行；发布门禁会保存通过或拒绝记录，拒绝候选不会创建 Release。通过门禁的 Release 仍需单独运行 `approve`，激活/灰度前会检查审批记录；审批与激活各自持久化，审批不可覆盖。`/config gate-attempts` 查看门禁尝试，`/config revisions`、`releases`、`diff`、`current`、`history`、`run <runId>` 分别检查版本、发布、差异、当前指针、激活审计和 Run 快照。也可在交互 CLI 输入 `/config <子命令>`。CLI 的 `local-cli` 只是未认证操作者标识，HTTP API 与生产身份认证/授权尚未交付；该审批记录仅作流程审计，不是可信身份认证或双人授权；本地配置发布命令只应在受控环境使用。
+
+灰度通过 `rollout <releaseId> <percent> <reason>` 设置稳定 Run ID 分桶；在没有可信用户身份前不提供用户/租户分流。自动回滚定时器默认关闭。启用前需明确设置 `AGENT_CONFIG_AUTO_ROLLBACK_ENABLED=true`，并配置样本下限、失败率阈值、观察窗口、冷却期和扫描上限；只统计灰度候选版本的已完成 SUCCEEDED/PARTIAL/FAILED Run，取消和未完成 Run 不进入分母。数据页达到扫描上限时保守地不决策。触发后以 CAS 移除候选、保留稳定 Release，并记录 `AUTO_ROLLBACK` 事件；这不是对模型质量的全面保证。每个副本都可能执行检查，但数据库版本 CAS 防止多个副本重复覆盖激活指针。
+
+配置修订和门禁历史不包含模型密钥值；配置模型中只允许 `secret://` 引用，提示词、Skill、发布说明和变更原因会拒绝明显的凭据字面量模式。该检测属于保守校验，不能替代发布内容审查或 Secret 管理。
 
 ### Supervisor–Worker 演示（阶段三）
 

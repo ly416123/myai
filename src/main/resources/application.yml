@@ -31,6 +31,19 @@ agent:
   max-model-retries: ${AGENT_MAX_MODEL_RETRIES:2}
   max-tasks: ${AGENT_MAX_TASKS:8}
   max-parallelism: ${AGENT_MAX_PARALLELISM:2}
+  configuration-environment: ${AGENT_CONFIG_ENVIRONMENT:local}
+  configuration-agent-id: ${AGENT_CONFIG_AGENT_ID:myai}
+  configuration-evaluation-minimum-cases: ${AGENT_CONFIG_EVAL_MINIMUM_CASES:1}
+  configuration-auto-rollback-enabled: ${AGENT_CONFIG_AUTO_ROLLBACK_ENABLED:false}
+  configuration-auto-rollback-minimum-samples: ${AGENT_CONFIG_AUTO_ROLLBACK_MINIMUM_SAMPLES:10}
+  configuration-auto-rollback-failure-rate-threshold: ${AGENT_CONFIG_AUTO_ROLLBACK_FAILURE_RATE_THRESHOLD:0.5}
+  configuration-auto-rollback-observation-window: ${AGENT_CONFIG_AUTO_ROLLBACK_OBSERVATION_WINDOW:PT15M}
+  configuration-auto-rollback-cooldown: ${AGENT_CONFIG_AUTO_ROLLBACK_COOLDOWN:PT30M}
+  configuration-auto-rollback-scan-limit: ${AGENT_CONFIG_AUTO_ROLLBACK_SCAN_LIMIT:1000}
+  configuration:
+    auto-rollback:
+      check-interval: ${AGENT_CONFIG_AUTO_ROLLBACK_CHECK_INTERVAL:PT30S}
+      initial-delay: ${AGENT_CONFIG_AUTO_ROLLBACK_INITIAL_DELAY:PT30S}
   separate-task-workers: ${AGENT_SEPARATE_TASK_WORKERS:false}
   worker-concurrency: ${AGENT_WORKER_CONCURRENCY:4}
   worker-poll-interval: ${AGENT_WORKER_POLL_INTERVAL:1s}

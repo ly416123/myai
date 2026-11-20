@@ -17,12 +17,16 @@ import com.example.agent.evaluation.EvaluationService;
 import com.example.agent.evaluation.EvaluationComparator;
 import com.example.agent.evaluation.EvaluationJsonExporter;
 import com.example.agent.evaluation.AgentEvaluationDatasetLoader;
+import com.example.agent.configuration.AgentConfigurationService;
+import com.example.agent.configuration.AgentConfigRelease;
+import com.example.agent.configuration.AgentConfigRevision;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.ExitCodeGenerator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Scanner;
@@ -42,11 +46,14 @@ public final class Main implements ApplicationRunner {
     private final EvaluationService evaluationService;
     private final EvaluationRepository evaluationRepository;
     private final ObjectMapper mapper;
+    private final AgentConfigurationService configurationService;
 
+    @Autowired
     public Main(AgentRuntime runtime, CollaborativeWorkflow collaborative, RunStore runStore,
                 AgentProperties properties, RunSubmissionService submissions, ToolExecutionAuditStore toolAuditStore,
                 AgentEvaluationRunner evaluationRunner, AgentEvaluationConfig evaluationConfig,
-                EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper) {
+                EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper,
+                AgentConfigurationService configurationService) {
         this.runtime = runtime;
         this.collaborative = collaborative;
         this.runStore = runStore;
@@ -58,6 +65,16 @@ public final class Main implements ApplicationRunner {
         this.evaluationService = evaluationService;
         this.evaluationRepository = evaluationRepository;
         this.mapper = mapper;
+        this.configurationService = configurationService;
+    }
+
+    /** Compatibility constructor for CLI adapter unit tests that do not exercise release management. */
+    public Main(AgentRuntime runtime, CollaborativeWorkflow collaborative, RunStore runStore,
+                AgentProperties properties, RunSubmissionService submissions, ToolExecutionAuditStore toolAuditStore,
+                AgentEvaluationRunner evaluationRunner, AgentEvaluationConfig evaluationConfig,
+                EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper) {
+        this(runtime, collaborative, runStore, properties, submissions, toolAuditStore, evaluationRunner,
+                evaluationConfig, evaluationService, evaluationRepository, mapper, null);
     }
 
     @Override
@@ -65,6 +82,12 @@ public final class Main implements ApplicationRunner {
         String mode = args.getOptionValues("agent.execution-mode") == null
                 ? properties.getExecutionMode()
                 : args.getOptionValues("agent.execution-mode").getLast();
+        if (args.containsOption("agent.config-command")) {
+            var command = new java.util.ArrayList<String>(args.getOptionValues("agent.config-command"));
+            command.addAll(args.getNonOptionArgs());
+            executeConfigurationCommand(String.join(" ", command));
+            return;
+        }
         if ("once".equalsIgnoreCase(mode)) {
             executeOnce(properties.getTask());
             return;
@@ -80,7 +103,7 @@ public final class Main implements ApplicationRunner {
         System.out.println("Java Agent Workflow 已启动。输入 /runs 查看记录，/tool-audit <runId> 查看工具审计，/resume <runId> 恢复单 Agent，"
                 + "/multi <任务> 试用 Supervisor–Worker，/enqueue <任务> 提交后台任务，"
                 + "/multi-enqueue <任务> 提交协作任务，/multi-resume <runId> 恢复多 Agent，"
-                + "/eval help 查看评测命令，/exit 结束。\n");
+                + "/eval help 查看评测命令，/config help 管理配置版本，/exit 结束。\n");
         try (var scanner = new Scanner(System.in)) {
             while (true) {
                 System.out.print("你> ");
@@ -91,6 +114,12 @@ public final class Main implements ApplicationRunner {
                 if (input.equals("/eval") || input.startsWith("/eval ")) {
                     try { executeEvaluationCommand(input.equals("/eval") ? "" : input.substring(6).trim()); }
                     catch (Exception e) { System.err.println("评测操作未完成；请检查命令参数和评测记录。"); }
+                    System.out.println();
+                    continue;
+                }
+                if (input.equals("/config") || input.startsWith("/config ")) {
+                    try { executeConfigurationCommand(input.equals("/config") ? "" : input.substring(8).trim()); }
+                    catch (Exception e) { System.err.println("配置操作未完成；请检查命令参数或门禁结果。"); }
                     System.out.println();
                     continue;
                 }
@@ -238,8 +267,143 @@ public final class Main implements ApplicationRunner {
         }
     }
 
+    private void executeConfigurationCommand(String command) {
+        if (configurationService == null) throw new IllegalStateException("Configuration release management is unavailable");
+        String[] parts = command == null || command.isBlank() ? new String[]{"help"} : command.split("\\s+", 5);
+        if (parts[0].equals("help")) {
+            System.out.println("/config revision <json-file> | eval <revisionId> | release <revisionId> <evaluationId> <baselineReleaseId|-> <notes>");
+            System.out.println("/config revisions | releases | diff <revisionA> <revisionB> | current | history | run <runId>");
+            System.out.println("/config gate-attempts");
+            System.out.println("/config approve <releaseId> <reason> | activate <releaseId> <reason>");
+            System.out.println("/config rollout <releaseId> <percent> <reason> | rollback <releaseId> <reason>");
+            return;
+        }
+        String actor = "local-cli";
+        switch (parts[0]) {
+            case "revision" -> {
+                requireArguments(parts, 2);
+                try {
+                    var document = mapper.readValue(Path.of(parts[1]).toFile(),
+                            com.example.agent.configuration.AgentConfigDocument.class);
+                    AgentConfigRevision revision = configurationService.createRevision(document,
+                            System.getenv("GIT_COMMIT"), actor, java.time.Instant.now());
+                    System.out.printf("revisionId=%s sha256=%s%n", revision.revisionId(), revision.contentHash());
+                } catch (java.io.IOException invalidDocument) {
+                    throw new IllegalArgumentException("Configuration file could not be read or parsed");
+                }
+            }
+            case "eval" -> {
+                requireArguments(parts, 2);
+                var dataset = AgentEvaluationDatasetLoader.loadSnapshot(properties.getEvaluationDataset(), mapper);
+                var revision = configurationService.revision(parts[1]);
+                var evaluation = evaluationService.runForConfiguration(dataset, revision, evaluationConfig,
+                        "deepseek", "single-or-dataset");
+                System.out.printf("evaluationId=%s status=%s configHash=%s cases=%d passed=%d%n",
+                        evaluation.evaluationId(), evaluation.status(), evaluation.configurationHash(),
+                        evaluation.aggregate().totalCases(), evaluation.aggregate().passedCases());
+            }
+            case "release" -> {
+                requireArguments(parts, 5);
+                AgentConfigRevision revision = configurationService.revision(parts[1]);
+                var candidate = evaluationRepository.find(parts[2]).orElseThrow(
+                        () -> new IllegalArgumentException("Candidate evaluation was not found"));
+                AgentConfigRelease baselineRelease = parts[3].equals("-") ? null
+                        : configurationService.release(parts[3]);
+                var baseline = baselineRelease == null ? null : evaluationRepository.find(baselineRelease.evaluationId())
+                        .orElseThrow(() -> new IllegalArgumentException("Baseline evaluation was not found"));
+                AgentConfigRelease release = configurationService.createRelease(revision, candidate, baselineRelease,
+                        baseline, System.getenv("GIT_COMMIT"), parts[4], actor, java.time.Instant.now());
+                System.out.printf("releaseId=%s revisionId=%s sha256=%s evaluationId=%s gate=PASS%n",
+                        release.releaseId(), release.revisionId(), release.contentHash(), release.evaluationId());
+            }
+            case "revisions" -> configurationService.revisions(50).forEach(revision ->
+                    System.out.printf("%s sha256=%s model=%s createdBy=%s%n", revision.revisionId(),
+                            revision.contentHash(), revision.document().model().model(), "see revision metadata"));
+            case "releases" -> configurationService.releases(50).forEach(release ->
+                    System.out.printf("%s revision=%s sha256=%s evaluation=%s gate=%s approved=%s%n", release.releaseId(),
+                            release.revisionId(), release.contentHash(), release.evaluationId(),
+                            release.gateDecision().path("passed").asBoolean(false) ? "PASS" : "REJECTED",
+                            configurationService.isApproved(release.releaseId())));
+            case "diff" -> {
+                requireArguments(parts, 3);
+                configurationService.diff(parts[1], parts[2]).forEach(change ->
+                        System.out.printf("%s: %s -> %s%n", change.path(), change.before(), change.after()));
+            }
+            case "current" -> {
+                var assignment = configurationService.current(properties.getConfigurationEnvironment(),
+                        properties.getConfigurationAgentId());
+                if (assignment == null) System.out.println("activeRelease=none");
+                else System.out.printf("environment=%s agentId=%s activeRelease=%s candidateRelease=%s candidatePercent=%d version=%d%n",
+                        assignment.environment(), assignment.agentId(), assignment.activeReleaseId(),
+                        assignment.candidateReleaseId(), assignment.candidatePercent(), assignment.version());
+            }
+            case "history" -> configurationService.history(properties.getConfigurationEnvironment(),
+                    properties.getConfigurationAgentId(), 50).forEach(event ->
+                    System.out.printf("eventId=%d action=%s release=%s actor=%s at=%s reason=%s%n", event.eventId(),
+                            event.action(), event.releaseId(), event.actor(), event.occurredAt(), event.reason()));
+            case "gate-attempts" -> configurationService.gateAttempts(50).forEach(attempt ->
+                    System.out.printf("attemptId=%d revision=%s evaluation=%s baseline=%s gate=%s reason=%s actor=%s at=%s%n",
+                            attempt.attemptId(), attempt.revisionId(), attempt.evaluationId(), attempt.baselineReleaseId(),
+                            attempt.decision().path("passed").asBoolean(false) ? "PASS" : "REJECTED",
+                            attempt.decision().path("reason").asText("unknown"), attempt.actor(), attempt.occurredAt()));
+            case "run" -> {
+                requireArguments(parts, 2);
+                var run = runStore.find(parts[1]).orElseThrow(() -> new IllegalArgumentException("Run was not found"));
+                var snapshot = run.configurationSnapshot();
+                System.out.printf("runId=%s status=%s releaseId=%s revisionId=%s sha256=%s resumed=%s%n", run.runId(),
+                        run.status(), snapshot == null ? "unversioned" : snapshot.releaseId(),
+                        snapshot == null ? "unknown" : snapshot.revisionId(),
+                        snapshot == null ? "unknown" : snapshot.contentHash(), run.resumed());
+            }
+            case "approve" -> {
+                requireMinimumArguments(parts, 3);
+                var approval = configurationService.approveRelease(parts[1], actor, joinFrom(parts, 2),
+                        java.time.Instant.now());
+                System.out.printf("approved=true releaseId=%s actor=%s at=%s%n", approval.releaseId(),
+                        approval.actor(), approval.approvedAt());
+            }
+            case "activate" -> {
+                requireMinimumArguments(parts, 3);
+                long version = currentAssignmentVersion();
+                boolean changed = configurationService.activate(properties.getConfigurationEnvironment(),
+                        properties.getConfigurationAgentId(), parts[1], version, actor, joinFrom(parts, 2));
+                System.out.printf("activated=%s assignmentVersion=%d%n", changed, changed ? version + 1 : version);
+            }
+            case "rollout" -> {
+                requireMinimumArguments(parts, 4);
+                long version = currentAssignmentVersion();
+                boolean changed = configurationService.rollout(properties.getConfigurationEnvironment(),
+                        properties.getConfigurationAgentId(), parts[1], Integer.parseInt(parts[2]), version, actor, joinFrom(parts, 3));
+                System.out.printf("rolloutUpdated=%s assignmentVersion=%d%n", changed, changed ? version + 1 : version);
+            }
+            case "rollback" -> {
+                requireMinimumArguments(parts, 3);
+                long version = currentAssignmentVersion();
+                boolean changed = configurationService.rollback(properties.getConfigurationEnvironment(),
+                        properties.getConfigurationAgentId(), parts[1], version, actor, joinFrom(parts, 2));
+                System.out.printf("rolledBack=%s assignmentVersion=%d%n", changed, changed ? version + 1 : version);
+            }
+            default -> throw new IllegalArgumentException("Unknown config command");
+        }
+    }
+
+    private long currentAssignmentVersion() {
+        var current = configurationService.current(properties.getConfigurationEnvironment(),
+                properties.getConfigurationAgentId());
+        return current == null ? 0 : current.version();
+    }
+
+    private static String joinFrom(String[] parts, int index) {
+        if (parts.length <= index) throw new IllegalArgumentException("A change reason is required");
+        return String.join(" ", java.util.Arrays.copyOfRange(parts, index, parts.length));
+    }
+
     private static void requireArguments(String[] parts, int count) {
         if (parts.length != count) throw new IllegalArgumentException("Invalid evaluation command arguments");
+    }
+
+    private static void requireMinimumArguments(String[] parts, int count) {
+        if (parts.length < count) throw new IllegalArgumentException("Invalid configuration command arguments");
     }
 
     private static final class EvaluationExitException extends RuntimeException implements ExitCodeGenerator {

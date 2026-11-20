@@ -66,6 +66,29 @@ class PostgresRunStoreTest {
     }
 
     @Test
+    void persistsRunConfigurationSnapshotAndQueryableReleaseProjection() {
+        String runId = "pg-config-snapshot-" + java.util.UUID.randomUUID();
+        var document = new com.example.agent.configuration.AgentConfigDocument(1, "stable prompt", List.of(),
+                new com.example.agent.configuration.ModelSettings("deepseek", "deepseek-chat", java.util.Map.of(),
+                        "secret://deepseek/api-key"), java.util.Set.of("calculator"), java.util.Map.of(),
+                new com.example.agent.configuration.RuntimeSettings(10, 8, 2, 60_000, 10, 2));
+        var revision = com.example.agent.configuration.AgentConfigRevision.create(document,
+                new ObjectMapper().findAndRegisterModules());
+        var snapshot = new com.example.agent.configuration.RunConfigurationSnapshot("release-test",
+                revision.revisionId(), revision.contentHash(), document);
+        RunRecord run = RunRecord.create(runId, "calculate", Duration.ofMinutes(2));
+        run.setConfigurationSnapshot(snapshot);
+        store.save(run);
+
+        RunRecord loaded = store.find(runId).orElseThrow();
+        assertEquals(snapshot, loaded.configurationSnapshot());
+        assertEquals("release-test", jdbc.queryForObject("select config_release_id from agent_run where run_id = ?",
+                String.class, runId));
+        assertEquals(revision.contentHash(), jdbc.queryForObject("select config_hash from agent_run where run_id = ?",
+                String.class, runId));
+    }
+
+    @Test
     void appendsSanitizedToolAuditEventsOnlyWhenToolStepStateChanges() {
         String runId = "pg-tool-audit-" + java.util.UUID.randomUUID();
         Instant now = Instant.now();

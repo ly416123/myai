@@ -25,6 +25,11 @@ public interface ModelClient extends AutoCloseable {
      */
     ModelResponse complete(List<Message> messages, List<ToolDefinition> tools);
 
+    /** Uses immutable Run-scoped settings when the provider supports per-request model selection. */
+    default ModelResponse complete(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        return complete(messages, tools);
+    }
+
     /**
      * 释放底层客户端资源。测试用的简单 ModelClient 无资源需要释放，因此提供空默认实现。
      */

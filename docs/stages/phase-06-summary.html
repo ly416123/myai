@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阶段六验收总结：Agent 配置版本、发布与运行时切换</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #182230; background: #f4f7fb; }
+    body { max-width: 1120px; margin: 0 auto; padding: 2rem 1.25rem 4rem; line-height: 1.65; }
+    header, section { background: #fff; border: 1px solid #dbe3ef; border-radius: 12px; padding: 1.25rem 1.5rem; margin: 1rem 0; }
+    h1, h2 { line-height: 1.25; } h1 { margin-top: 0; } h2 { color: #173b68; }
+    .status { border-left: 5px solid #197a48; padding: .65rem 1rem; background: #eef9f2; }
+    .caveat { border-left: 5px solid #b56a00; padding: .65rem 1rem; background: #fff8e9; }
+    code { background: #eef2f7; border-radius: 4px; padding: .1rem .3rem; }
+    .diagram { overflow-x: auto; }
+    svg { display: block; min-width: 820px; width: 100%; height: auto; background: #fbfdff; border: 1px solid #dbe3ef; border-radius: 10px; }
+    .layer { fill: #f0f6ff; stroke: #7e9ec5; stroke-width: 1.5; rx: 10; }
+    .store { fill: #eef9f2; stroke: #4b9b68; stroke-width: 1.5; rx: 10; }
+    .cap { fill: #fff; stroke: #8ba1ba; stroke-width: 1.2; rx: 7; }
+    .arrow { stroke: #365f8b; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    .dashed { stroke-dasharray: 6 5; }
+    .label { font-size: 15px; fill: #182230; font-weight: 600; }
+    .small { font-size: 12px; fill: #425466; }
+    @media print { body { background: #fff; max-width: none; } header, section { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>阶段六：Agent 配置版本、发布与运行时切换</h1>
+    <p class="status"><strong>验收结论：</strong>阶段六功能本机范围验收通过；加入 PR 候选发布回归测试后，全量 Maven 验证通过 258 项测试，0 失败、0 错误、0 跳过。PostgreSQL Testcontainers 集成测试实际运行 Flyway 至 V12。</p>
+    <p class="caveat"><strong>交付边界：</strong>阶段六分支的 PR 验证和分支候选镜像发布均已通过，候选镜像已部署到 L5 并完成基础运行验收；Worker 2/2 Ready，数据库迁移至 V12。PR #10 尚未合入 <code>main</code>，当前等待 GitHub 要求的审批；Auto-merge 会在审批和必需检查满足后执行，不绕过保护规则。L5 当前运行的是分支候选镜像，不是默认分支正式发布镜像。</p>
+    <p>总结对应时间点：2026-11-17，本地功能分支 <code>codex/phase-06-agent-config-release</code>。架构图描述的是该阶段实际实现形态，不是目标生产架构。</p>
+  </header>
+
+  <section>
+    <h2>1. 阶段目标与上一阶段遗留</h2>
+    <p>阶段六为 Agent 配置建立可追溯的版本、离线评测门禁、发布审批、激活/灰度/回滚，以及每个 Run 固定配置快照的生命周期。阶段五已经提供 Worker 输入输出契约，但 Prompt、Skill、模型参数、工具权限和 Worker 契约引用尚未组成统一的不可变发布版本。运行时配置若随静态文件或部署改变，可能导致新 Run 无法确定实际配置来源；运行中恢复也可能难以证明沿用原规则。</p>
+  </section>
+
+  <section>
+    <h2>2. 本阶段实现</h2>
+    <ul>
+      <li>配置内容规范化后生成稳定 SHA-256 Revision；PostgreSQL 保存不可变 Revision、Release、激活指针、门禁尝试、审批记录和追加式发布事件。</li>
+      <li>发布前关联阶段四离线 Evaluation，由兼容性和显式门禁规则决定是否创建 Release；失败门禁也保留审计尝试。</li>
+      <li>激活、灰度和回滚通过数据库版本 compare-and-set 更新；按稳定 Run ID 分桶，不支持伪造用户/租户身份的灰度。</li>
+      <li>新 Run 创建时解析有效 Release 并持久化配置快照；现有 Run 与恢复任务保留原快照。PostgreSQL 另投影 Release ID 和配置哈希便于查询。</li>
+      <li>Runtime、CollaborativeWorkflow 和模型适配器按快照应用提示词、Skill、模型参数、工具 allowlist、Worker 契约引用与预算；工具权限在执行侧再次校验。</li>
+      <li>CLI 提供 Revision/Release、评测门禁、审批、差异、当前版本、历史、Run 快照、激活、灰度及回滚操作。可选自动回滚依据灰度候选 Run 的终态失败率，默认关闭。</li>
+    </ul>
+  </section>
+
+  <section id="architecture" class="diagram">
+    <h2>3. 阶段六完成时的整体分层架构</h2>
+    <p>实线表示主要调用或数据流，虚线表示由运行记录驱动的可选监控决策。配置生命周期由应用服务控制；模型能力被多个运行层使用，因此作为横向适配能力展示。</p>
+    <svg viewBox="0 0 1040 690" role="img" aria-labelledby="diagram-title diagram-desc">
+      <title id="diagram-title">阶段六 MyAi Agent Runtime 分层架构</title>
+      <desc id="diagram-desc">CLI 调用应用配置服务或 Run 提交服务；配置服务使用离线评测门禁并写入 PostgreSQL。激活配置由 ActiveConfigurationProvider 在创建 Run 时解析为固定快照，供 AgentRuntime 与 CollaborativeWorkflow 执行。运行层调用模型适配器和工具，RunStore 记录状态。可选自动回滚监控读取候选 Run 结果并通过 CAS 更新激活指针。</desc>
+      <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#365f8b"/></marker></defs>
+
+      <rect class="layer" x="22" y="24" width="996" height="76"/>
+      <text class="label" x="42" y="52">接入层</text>
+      <rect class="cap" x="240" y="39" width="240" height="44"/><text class="label" x="284" y="66">CLI / Main</text>
+      <text class="small" x="505" y="66">配置管理命令、交互式任务提交</text>
+
+      <rect class="layer" x="22" y="120" width="996" height="118"/>
+      <text class="label" x="42" y="148">应用与配置生命周期层</text>
+      <rect class="cap" x="230" y="158" width="240" height="55"/><text class="label" x="250" y="183">AgentConfigurationService</text><text class="small" x="265" y="201">门禁、审批、激活、回滚</text>
+      <rect class="cap" x="500" y="158" width="220" height="55"/><text class="label" x="518" y="183">ActiveConfigurationProvider</text><text class="small" x="536" y="201">解析并固定 Run 配置</text>
+      <rect class="cap" x="750" y="158" width="230" height="55"/><text class="label" x="766" y="183">离线 Evaluation Gate</text><text class="small" x="778" y="201">确定性规则与兼容性比较</text>
+
+      <rect class="layer" x="22" y="258" width="996" height="110"/>
+      <text class="label" x="42" y="286">Workflow / Harness 执行层</text>
+      <rect class="cap" x="250" y="300" width="300" height="48"/><text class="label" x="330" y="329">AgentRuntime</text>
+      <rect class="cap" x="590" y="300" width="350" height="48"/><text class="label" x="680" y="329">CollaborativeWorkflow</text>
+      <text class="small" x="410" y="360">两种执行路径都使用同一 Run 固定快照</text>
+
+      <rect class="layer" x="22" y="388" width="996" height="104"/>
+      <text class="label" x="42" y="416">领域能力与适配层（横向能力）</text>
+      <rect class="cap" x="230" y="430" width="240" height="44"/><text class="label" x="288" y="457">DeepSeek ModelClient</text>
+      <rect class="cap" x="500" y="430" width="220" height="44"/><text class="label" x="540" y="457">ToolRegistry / Executor</text>
+      <rect class="cap" x="750" y="430" width="230" height="44"/><text class="label" x="778" y="457">Worker Contracts</text>
+
+      <rect class="store" x="22" y="514" width="996" height="112"/>
+      <text class="label" x="42" y="542">持久化与审计层：PostgreSQL + Flyway（V12）</text>
+      <rect class="cap" x="210" y="558" width="210" height="48"/><text class="label" x="250" y="587">ConfigStore</text>
+      <rect class="cap" x="445" y="558" width="210" height="48"/><text class="label" x="485" y="587">EvaluationStore</text>
+      <rect class="cap" x="680" y="558" width="280" height="48"/><text class="label" x="735" y="587">RunStore / Checkpoints</text>
+
+      <rect class="layer" x="22" y="648" width="996" height="28"/>
+      <text class="small" x="300" y="667">可观测性：结构化本地日志 / OTel 关联；配置版本不作为 Prometheus 高基数标签</text>
+
+      <path class="arrow" d="M360 100 L360 158"/>
+      <path class="arrow" d="M430 100 C430 125 850 120 850 158"/>
+      <path class="arrow" d="M470 185 L500 185"/>
+      <path class="arrow" d="M610 213 L470 300"/>
+      <path class="arrow" d="M610 213 L765 300"/>
+      <path class="arrow" d="M400 348 L345 430"/>
+      <path class="arrow" d="M430 348 L600 430"/>
+      <path class="arrow" d="M765 348 L865 430"/>
+      <path class="arrow" d="M345 474 L345 558"/>
+      <path class="arrow" d="M600 474 L810 558"/>
+      <path class="arrow" d="M765 213 C765 355 550 395 550 558"/>
+      <path class="arrow" d="M850 213 L330 558"/>
+      <path class="arrow dashed" d="M810 558 C1000 520 1000 220 950 210"/>
+    </svg>
+    <p><strong>图示说明：</strong>Revision、Release、门禁尝试与审批事件由配置存储持久化；新 Run 从当前激活指针解析配置后写入自己的快照。运行时通过模型和工具适配器完成执行，RunStore 保存任务及检查点。自动回滚监控默认关闭，开启时读取候选版本的 Run 终态并以 CAS 方式移除候选版本。</p>
+  </section>
+
+  <section>
+    <h2>4. 关键设计选择</h2>
+    <ul>
+      <li><strong>PostgreSQL 作为唯一权威配置存储：</strong>与 Run、评测现有基础设施一致，利用事务和版本 CAS 保证激活并发安全；没有引入 Redis、MQ 或独立配置平台。</li>
+      <li><strong>配置不可变，Run 快照固定：</strong>避免运行期间漂移，并让恢复任务能按已保存配置继续。替代方案是每次模型调用读取当前配置，会让同一个 Run 在激活切换后行为改变，因此未采用。</li>
+      <li><strong>先离线评测，再单独审批和激活：</strong>保留评测门禁与操作者动作的审计分离。当前审批仅是流程记录，因为没有可信认证身份，不宣称双人审批或生产授权。</li>
+      <li><strong>灰度键使用稳定 Run ID：</strong>当前没有可信用户/租户身份；按身份分桶会产生虚假隔离，因此暂不提供用户级灰度。</li>
+      <li><strong>自动回滚默认关闭：</strong>已实现有限窗口内的运行终态失败率阈值，但它只能检测操作性失败，不能识别回答质量退化；没有语义评测数据时不自动假设质量正常。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5. 实际效果与验收证据</h2>
+    <ul>
+      <li>配置内容相同会得到稳定 Revision 哈希；变更后生成新 Revision，发布记录不可覆盖。</li>
+      <li>激活后创建的新 Run 固定当前配置快照；两个独立配置 Provider 切换后，新 Run 读取新版本，已存储 Run 仍保留旧快照。PostgreSQL Testcontainers 集成测试覆盖该行为。</li>
+      <li>拒绝的发布门禁保留审计尝试但不生成 Release；未审批 Release 不能激活、灰度或回滚。</li>
+      <li>测试在 Colima Docker 环境实际启动 PostgreSQL 16.16，并应用 Flyway V10、V11、V12；真实模型 API 与真实密钥未被调用或读取。</li>
+      <li>阶段功能验收命令：<code>DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock mvn --batch-mode --no-transfer-progress clean verify</code>，当时为 257 tests 全通过；本次增加候选发布策略回归测试后重复执行，同一命令结果为 <strong>BUILD SUCCESS，258 tests，0 failures，0 errors，0 skipped</strong>。</li>
+      <li>GitHub Actions PR 验证运行 <code>44092609780</code> 通过；分支 push 运行 <code>44092595531</code> 的 <code>verify</code> 与 <code>publish-images</code> 均通过，覆盖 Maven、Gitleaks、告警规则、第三方镜像摘要、镜像构建和扫描。Gitleaks v8.30.1 扫描 105 个提交后无命中；历史提交中的一条单测虚构凭据样例被精确指纹加入忽略清单，当前测试改为运行时拼接样例并继续覆盖拒绝行为。分支候选标签为 <code>candidate-a4c7e254aefc05221bf02a09d5bbc126e148111e-44092595531-1</code>；Runtime 镜像 OCI index digest 为 <code>sha256:ab586267f2b9955fc5c28a5eda2d9d25098fe25da61673c9754e57f172269484</code>，镜像 revision label 与提交 SHA 一致。</li>
+      <li>2026-11-17 将 amd64 候选镜像导入 L5 K3s containerd，仅更新 <code>myai-agent-worker</code> Deployment。滚动升级前 Node 为 Ready、MemoryPressure/DiskPressure 为 False，Worker 2/2 Ready，PostgreSQL PVC Bound；当时节点 CPU 为 434m（10%）、内存 3749Mi（51%），根卷约 80GiB 可用。Deployment 使用 <code>maxUnavailable=0</code>、<code>maxSurge=1</code>，滚动完成后 Worker 2/2 Ready、无新 Pod 重启。</li>
+      <li>L5 Worker 启动时 Flyway 从 V7 成功应用 V8–V12；数据库只读查询确认 V12 及阶段六配置表存在。Prometheus Ready，Collector 与 Tempo 两个活动抓取目标均为 UP。以上是候选镜像在单节点 L5 上的受控部署验收，不证明高可用、数据库灾备或生产身份授权。</li>
+    </ul>
+    <p>本机开始全量验证前检查到 macOS Data 卷约 104 GiB 可用，Colima Docker 数据卷约 92 GiB 可用；该容量只代表检查时状态，不是长期资源承诺。没有清理共享 Docker 数据。</p>
+  </section>
+
+  <section>
+    <h2>6. 剩余限制与后续方向</h2>
+    <ul>
+      <li>阶段六分支已推送，PR 验证、候选镜像发布和 L5 候选部署验收均已通过。PR #10 等待必需审批；合入默认分支后还需由 main 工作流发布正式 SHA 镜像，并按运维流程切换和核验正式镜像。候选部署不能替代正式发布验收。</li>
+      <li>HTTP API、生产身份认证授权、真实双人审批和用户/租户级灰度仍未交付。当前 CLI 仅适用于受控环境。</li>
+      <li>自动回滚仅按运行失败类别统计，不能代表模型回答质量；默认关闭，也没有告警通知接收端。</li>
+      <li>凭据字面量检测是保守规则，不能替代完整的 Secret 管理或内容安全审查。</li>
+      <li>阶段七可按需评估记忆能力；现有候选规划保持独立，不属于阶段六交付。</li>
+    </ul>
+  </section>
+
+  <footer><p>相关文档：<a href="../plans/phase-06-requirements.md">阶段六需求</a>、<a href="../architecture/enterprise-migration-roadmap.md">企业化升级路线图</a>、<a href="../operations/l5-runbook.md">L5 运维手册</a>。</p></footer>
+</body>
+</html>

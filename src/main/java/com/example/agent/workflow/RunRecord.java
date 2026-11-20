@@ -1,6 +1,7 @@
 package com.example.agent.workflow;
 
 import com.example.agent.model.Message;
+import com.example.agent.configuration.RunConfigurationSnapshot;
 import com.example.agent.collaboration.ChildTaskRecord;
 import com.example.agent.collaboration.WorkerContractIssue;
 import com.example.agent.collaboration.TaskPlan;
@@ -47,6 +48,7 @@ public final class RunRecord {
     private Long completionTokens;
     private boolean tokenUsageKnown = true;
     private Long planningInputUtf8Bytes;
+    private RunConfigurationSnapshot configurationSnapshot;
 
     /** Jackson 反序列化构造器。 */
     public RunRecord() { }
@@ -197,6 +199,7 @@ public final class RunRecord {
     public synchronized Long completionTokens() { return completionTokens; }
     public synchronized boolean tokenUsageKnown() { return tokenUsageKnown; }
     public synchronized Long planningInputUtf8Bytes() { return planningInputUtf8Bytes; }
+    public synchronized RunConfigurationSnapshot configurationSnapshot() { return configurationSnapshot; }
     public synchronized long totalDurationMillis() {
         if (createdAt == null || updatedAt == null) return 0;
         return Math.max(0, Duration.between(createdAt, updatedAt).toMillis());
@@ -226,6 +229,12 @@ public final class RunRecord {
     public synchronized void setPromptTokens(Long value) { promptTokens = value; }
     public synchronized void setCompletionTokens(Long value) { completionTokens = value; }
     public synchronized void setTokenUsageKnown(boolean value) { tokenUsageKnown = value; }
+    public synchronized void setConfigurationSnapshot(RunConfigurationSnapshot value) {
+        if (configurationSnapshot != null && !configurationSnapshot.equals(value)) {
+            throw new IllegalStateException("Run configuration snapshot is immutable once assigned");
+        }
+        configurationSnapshot = value;
+    }
 
     public synchronized String getRunId() { return runId; }
     public synchronized RunType getRunType() { return runType; }
@@ -254,4 +263,5 @@ public final class RunRecord {
     public synchronized Long getCompletionTokens() { return completionTokens; }
     public synchronized Long getPlanningInputUtf8Bytes() { return planningInputUtf8Bytes; }
     public synchronized boolean isTokenUsageKnown() { return tokenUsageKnown; }
+    public synchronized RunConfigurationSnapshot getConfigurationSnapshot() { return configurationSnapshot; }
 }
