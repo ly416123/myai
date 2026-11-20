@@ -1,6 +1,6 @@
 # 阶段六需求草案：Agent 配置版本、发布与运行时切换
 
-> **文档状态：** 阶段六功能于 2026-11-17 完成本机验收；`mvn clean verify` 为 258 项通过，0 失败、错误、跳过；Testcontainers PostgreSQL 实际应用 V12。GitHub Actions PR 验证运行 `44092609780` 通过，分支 push 运行 `44092595531` 的验证和候选镜像发布均通过。候选镜像 `candidate-a4c7e254aefc05221bf02a09d5bbc126e148111e-44092595531-1` 已部署到 L5，Worker 2/2 Ready、数据库 V12、Prometheus Ready 且两个活动 target 均 UP。PR #10 已于 2026-11-20 合入 `main`；合并提交 `2ad6570cb8800a071115e8543ae014e9b4da545a` 的 GitHub Actions run `44692307444` 中 `verify` 和 `publish-images` 均成功，默认分支 Runtime/代理 SHA 镜像可从 GHCR 读取。当前 L5 仍运行阶段六候选镜像；正式 SHA 镜像切换将在阶段七部署时一并完成并核验。在线评测仍是后续候选，不属于本阶段范围。阶段总结见[阶段六验收总结](../stages/phase-06-summary.html)。
+> **文档状态：** 阶段六功能于 2026-11-17 完成本机验收；`mvn clean verify` 为 258 项通过，0 失败、错误、跳过；Testcontainers PostgreSQL 实际应用 V12。GitHub Actions PR 验证运行 `44092609780` 通过，分支 push 运行 `44092595531` 的验证和候选镜像发布均通过。候选镜像 `candidate-a4c7e254aefc05221bf02a09d5bbc126e148111e-44092595531-1` 曾部署到 L5，Worker 2/2 Ready、数据库 V12。PR #10 已于 2026-11-20 合入 `main`；合并提交 `2ad6570cb8800a071115e8543ae014e9b4da545a` 的 GitHub Actions run `44692307444` 中 `verify` 和 `publish-images` 均成功。其后 PR #11 阶段七已合并并部署，L5 当前运行阶段七正式 SHA 镜像、Worker 2/2 Ready、数据库 V13；详情见[阶段七验收总结](../stages/phase-07-summary.html)。在线评测仍是后续候选，不属于本阶段范围。阶段总结见[阶段六验收总结](../stages/phase-06-summary.html)。
 
 ## 1. 背景与目标
 

@@ -28,7 +28,7 @@
   <header>
     <h1>阶段六：Agent 配置版本、发布与运行时切换</h1>
     <p class="status"><strong>验收结论：</strong>阶段六功能本机范围验收通过；加入 PR 候选发布回归测试后，全量 Maven 验证通过 258 项测试，0 失败、0 错误、0 跳过。PostgreSQL Testcontainers 集成测试实际运行 Flyway 至 V12。</p>
-    <p class="caveat"><strong>交付边界：</strong>阶段六候选镜像已部署到 L5 并完成基础运行验收；Worker 2/2 Ready，数据库迁移至 V12。PR #10 已于 2026-11-20 合入 <code>main</code>；合并提交 <code>2ad6570cb8800a071115e8543ae014e9b4da545a</code> 的 GitHub Actions run <code>44692307444</code> 中 <code>verify</code> 与 <code>publish-images</code> 均成功，默认分支 SHA 镜像已发布并从 GHCR 核验可读。L5 当前仍运行阶段六分支候选镜像；正式 SHA 镜像部署和切换随阶段七部署一并验收。</p>
+    <p class="caveat"><strong>交付边界：</strong>阶段六候选镜像曾部署到 L5 并完成基础运行验收；当时 Worker 2/2 Ready，数据库迁移至 V12。PR #10 已于 2026-11-20 合入 <code>main</code>；合并提交 <code>2ad6570cb8800a071115e8543ae014e9b4da545a</code> 的 GitHub Actions run <code>44692307444</code> 中 <code>verify</code> 与 <code>publish-images</code> 均成功，默认分支 SHA 镜像已发布并从 GHCR 核验可读。之后 L5 已切换至阶段七正式镜像并迁移至 V13；阶段七的完整交付证据见<a href="phase-07-summary.html">阶段七验收总结</a>。</p>
     <p>总结对应时间点：2026-11-17，本地功能分支 <code>codex/phase-06-agent-config-release</code>。架构图描述的是该阶段实际实现形态，不是目标生产架构。</p>
   </header>
 
@@ -135,7 +135,7 @@
   <section>
     <h2>6. 剩余限制与后续方向</h2>
     <ul>
-      <li>阶段六 PR #10 已合并，默认分支 CI 和 SHA 镜像发布均通过；阶段六候选镜像曾在 L5 验收。L5 正式 SHA 镜像切换尚待执行；候选部署不能替代正式发布验收。</li>
+      <li>阶段六 PR #10 已合并，默认分支 CI 和 SHA 镜像发布均通过；阶段六候选镜像曾在 L5 验收。后续阶段七正式镜像已在 L5 部署验收，详见阶段七总结。</li>
       <li>HTTP API、生产身份认证授权、真实双人审批和用户/租户级灰度仍未交付。当前 CLI 仅适用于受控环境。</li>
       <li>自动回滚仅按运行失败类别统计，不能代表模型回答质量；默认关闭，也没有告警通知接收端。</li>
       <li>凭据字面量检测是保守规则，不能替代完整的 Secret 管理或内容安全审查。</li>

@@ -6,7 +6,7 @@ resources:
 images:
   - name: registry.example.invalid/myai
     newName: ghcr.io/ly416123/myai-agent
-    newTag: 09178a55fe44e90858ff20ea33ede87a2d44bc26
+    newTag: 24fef5a221a7227dfc12d283fbf4c4115f58ecb7
   - name: registry.example.invalid/myai-model-egress-proxy
     newName: docker.io/library/myai-model-egress-proxy
     newTag: l5-20261113

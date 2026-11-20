@@ -154,9 +154,9 @@ L5 没有 Docker/Compose 命令不妨碍 K3s 运行容器。GitHub Actions 的 `
 
 配置版本与门禁均保存在 PostgreSQL。发布门禁通过或拒绝记录和激活/回滚事件分开存储；明文凭据字段不可表达，提示词、Skill 和审计文本另有常见凭据字面量拒绝规则，但该规则不替代内容审查。自动回滚是以 Run 终态失败率作为确定性操作阈值，不是模型语义质量评测或生产质量保证。HTTP API、生产身份认证授权、用户/租户灰度和在线 Trace 评测仍暂缓/不在范围内。
 
-### 阶段七：显式结构化记忆（本机验收通过，交付验证进行中）
+### 阶段七：显式结构化记忆（实现、CI 与 L5 交付验收通过）
 
-阶段七在阶段六已合入主线的提交上完成实现。本机 `mvn clean verify` 281 项测试通过，0 失败、0 错误、0 跳过；PostgreSQL 16 Testcontainers 实际执行 Flyway V13、记忆 CRUD、并发边界和 Run 快照往返。功能包括显式 `/memory` 管理、PostgreSQL 结构化记忆、确定性有界检索和 Run 创建时固定快照；协作 Worker 不接收父级完整记忆。当前阶段七分支已更新至最新 `main`，待远端 CI 与 L5 V13 部署验收；详细实现和限制见[阶段七总结](../stages/phase-07-summary.html)。本机功能验收不代表生产就绪。
+阶段七实现已通过 PR #11 合入 `main`，合并提交为 `24fef5a221a7227dfc12d283fbf4c4115f58ecb7`。本机 `mvn clean verify` 281 项测试通过，0 失败、0 错误、0 跳过；GitHub Actions PR 验证 `44693639672` 与主线 `verify`/`publish-images` run `44693773623` 成功。正式镜像 GHCR index 摘要为 `sha256:34db4018fa600b92e6e9baec9592782beb263643bd1ed9f309cc96cfb6068198`，`linux/amd64` manifest 为 `sha256:d1e22a43b599da0d09a4e6f6f120b8bed0fceae0347dbf040f38974fb827d9e6`。L5 部署后 Worker 2/2 Ready、无重启，Flyway 成功版本 V13，`agent_memory` 与 `agent_memory_event` 表存在，Prometheus 2/2 targets healthy；只修改 MyAI Worker Deployment。功能包括显式 `/memory` 管理、PostgreSQL 结构化记忆、确定性有界检索和 Run 创建时固定快照；协作 Worker 不接收父级完整记忆。详细实现、部署证据和限制见[阶段七总结](../stages/phase-07-summary.html)。阶段范围验收不代表生产就绪。
 
 ### 当前可继续实施
 
