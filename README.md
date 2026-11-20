@@ -16,9 +16,9 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段四：评测生命周期与可比较结果（功能验收、GitHub Actions 与 L5 交付闭环通过）](docs/stages/phase-04-summary.html)
 - [阶段五需求：Worker 能力注册与子任务数据契约](docs/plans/phase-05-requirements.md)
 - [阶段五验收总结：版本化 Worker 输入/输出契约](docs/stages/phase-05-summary.html)
-- [阶段六验收总结：Agent 配置版本、发布与运行时切换（本机、GitHub Actions 与 L5 候选部署验收通过；PR 等待审批）](docs/stages/phase-06-summary.html)
+- [阶段六验收总结：Agent 配置版本、发布与运行时切换（PR #10 已合并；候选版本已在 L5 验收）](docs/stages/phase-06-summary.html)
 - [阶段六需求与范围](docs/plans/phase-06-requirements.md)
-- [记忆能力候选规划（阶段六之后）](docs/plans/memory-capabilities-roadmap.md)
+- [记忆能力后续候选规划（阶段七之后）](docs/plans/memory-capabilities-roadmap.md)
 - [阶段七结构化记忆设计规格（实现分支）](docs/superpowers/specs/2026-11-18-memory-system-design.md)
 - [阶段七验收总结：显式结构化记忆](docs/stages/phase-07-summary.html)
 
