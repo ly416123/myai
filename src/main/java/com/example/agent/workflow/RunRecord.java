@@ -5,6 +5,7 @@ import com.example.agent.configuration.RunConfigurationSnapshot;
 import com.example.agent.collaboration.ChildTaskRecord;
 import com.example.agent.collaboration.WorkerContractIssue;
 import com.example.agent.collaboration.TaskPlan;
+import com.example.agent.memory.MemoryContextSnapshot;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.time.Duration;
@@ -49,6 +50,7 @@ public final class RunRecord {
     private boolean tokenUsageKnown = true;
     private Long planningInputUtf8Bytes;
     private RunConfigurationSnapshot configurationSnapshot;
+    private MemoryContextSnapshot memoryContextSnapshot;
 
     /** Jackson 反序列化构造器。 */
     public RunRecord() { }
@@ -200,6 +202,11 @@ public final class RunRecord {
     public synchronized boolean tokenUsageKnown() { return tokenUsageKnown; }
     public synchronized Long planningInputUtf8Bytes() { return planningInputUtf8Bytes; }
     public synchronized RunConfigurationSnapshot configurationSnapshot() { return configurationSnapshot; }
+    public synchronized MemoryContextSnapshot memoryContextSnapshot() { return memoryContextSnapshot; }
+    /** Old checkpoints have no memory snapshot; interpret them as empty without querying the store. */
+    public synchronized MemoryContextSnapshot memoryContextOrEmpty() {
+        return memoryContextSnapshot == null ? MemoryContextSnapshot.empty() : memoryContextSnapshot;
+    }
     public synchronized long totalDurationMillis() {
         if (createdAt == null || updatedAt == null) return 0;
         return Math.max(0, Duration.between(createdAt, updatedAt).toMillis());
@@ -235,6 +242,12 @@ public final class RunRecord {
         }
         configurationSnapshot = value;
     }
+    public synchronized void setMemoryContextSnapshot(MemoryContextSnapshot value) {
+        if (memoryContextSnapshot != null && !memoryContextSnapshot.equals(value)) {
+            throw new IllegalStateException("Run memory context snapshot is immutable once assigned");
+        }
+        memoryContextSnapshot = value;
+    }
 
     public synchronized String getRunId() { return runId; }
     public synchronized RunType getRunType() { return runType; }
@@ -264,4 +277,5 @@ public final class RunRecord {
     public synchronized Long getPlanningInputUtf8Bytes() { return planningInputUtf8Bytes; }
     public synchronized boolean isTokenUsageKnown() { return tokenUsageKnown; }
     public synchronized RunConfigurationSnapshot getConfigurationSnapshot() { return configurationSnapshot; }
+    public synchronized MemoryContextSnapshot getMemoryContextSnapshot() { return memoryContextSnapshot; }
 }

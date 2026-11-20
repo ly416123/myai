@@ -25,6 +25,8 @@ import com.example.agent.workflow.RunLeaseHeartbeat;
 import com.example.agent.workflow.RunLeasePolicy;
 import com.example.agent.workflow.StepKind;
 import com.example.agent.observability.AgentTelemetry;
+import com.example.agent.memory.MemoryContextProvider;
+import com.example.agent.memory.MemoryPrompt;
 import io.micrometer.observation.Observation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,6 +85,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     private final String configurationEnvironment;
     private final String configurationAgentId;
     private final com.example.agent.configuration.RunConfigurationSnapshot fixedConfigurationSnapshot;
+    private final MemoryContextProvider memoryContextProvider;
     private final ConcurrentHashMap<String, Control> controls = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LeaseToken> runLeases = new ConcurrentHashMap<>();
     private final ThreadLocal<TaskLeaseToken> activeTaskLease = new ThreadLocal<>();
@@ -112,7 +115,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                                  ActiveConfigurationProvider configurationProvider, String configurationEnvironment,
                                  String configurationAgentId) {
         this(model, allTools, workers, store, config, json, telemetry, leasePolicy, configurationProvider,
-                configurationEnvironment, configurationAgentId, null);
+                configurationEnvironment, configurationAgentId, null, MemoryContextProvider.empty());
     }
 
     public CollaborativeWorkflow(ModelClient model, ToolRegistry allTools, WorkerRegistry workers,
@@ -121,6 +124,17 @@ public final class CollaborativeWorkflow implements AutoCloseable {
                                  ActiveConfigurationProvider configurationProvider, String configurationEnvironment,
                                  String configurationAgentId,
                                  com.example.agent.configuration.RunConfigurationSnapshot fixedConfigurationSnapshot) {
+        this(model, allTools, workers, store, config, json, telemetry, leasePolicy, configurationProvider,
+                configurationEnvironment, configurationAgentId, fixedConfigurationSnapshot, MemoryContextProvider.empty());
+    }
+
+    public CollaborativeWorkflow(ModelClient model, ToolRegistry allTools, WorkerRegistry workers,
+                                 RunStore store, CollaborationConfig config, ObjectMapper json,
+                                 AgentTelemetry telemetry, RunLeasePolicy leasePolicy,
+                                 ActiveConfigurationProvider configurationProvider, String configurationEnvironment,
+                                 String configurationAgentId,
+                                 com.example.agent.configuration.RunConfigurationSnapshot fixedConfigurationSnapshot,
+                                 MemoryContextProvider memoryContextProvider) {
         this.model = java.util.Objects.requireNonNull(model);
         this.allTools = java.util.Objects.requireNonNull(allTools);
         this.workers = java.util.Objects.requireNonNull(workers);
@@ -133,6 +147,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         this.configurationEnvironment = configurationEnvironment;
         this.configurationAgentId = configurationAgentId;
         this.fixedConfigurationSnapshot = fixedConfigurationSnapshot;
+        this.memoryContextProvider = java.util.Objects.requireNonNull(memoryContextProvider);
         if (configurationProvider != null && fixedConfigurationSnapshot != null) {
             throw new IllegalArgumentException("Use either active configuration lookup or a fixed configuration snapshot");
         }
@@ -153,6 +168,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         RunRecord run = RunRecord.create(runId, input, snapshot == null ? config.timeout()
                 : min(config.timeout(), Duration.ofMillis(snapshot.document().runtime().taskTimeoutMillis())), RunType.COLLABORATIVE);
         run.setConfigurationSnapshot(snapshot);
+        run.setMemoryContextSnapshot(memoryContextProvider.snapshot(input));
         run.addMessage(Message.user(input));
         Control control = new Control();
         control.active = true;
@@ -439,12 +455,18 @@ public final class CollaborativeWorkflow implements AutoCloseable {
         return offered.stream().filter(tool -> allowed.contains(tool.name())).toList();
     }
 
-    private List<Message> modelMessages(RunRecord run, List<Message> original) {
-        if (run.configurationSnapshot() == null) return List.copyOf(original);
-        var document = run.configurationSnapshot().document();
-        StringBuilder prompt = new StringBuilder(document.systemPrompt());
-        for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
-                .append("\n").append(skill.content());
+    private List<Message> modelMessages(RunRecord run, List<Message> original, boolean includeMemory) {
+        StringBuilder prompt = new StringBuilder();
+        if (run.configurationSnapshot() != null) {
+            var document = run.configurationSnapshot().document();
+            prompt.append(document.systemPrompt());
+            for (var skill : document.skills()) prompt.append("\n\n## Skill: ").append(skill.name())
+                    .append("\n").append(skill.content());
+        }
+        if (includeMemory) {
+            String memoryPrompt = MemoryPrompt.render(run.memoryContextOrEmpty());
+            if (!memoryPrompt.isBlank()) prompt.append("\n\n").append(memoryPrompt);
+        }
         if (prompt.isEmpty()) return List.copyOf(original);
         var messages = new ArrayList<Message>();
         messages.add(Message.system(prompt.toString()));
@@ -924,7 +946,7 @@ public final class CollaborativeWorkflow implements AutoCloseable {
             try {
                 ModelResponse response;
                 try (var scope = stepObservation.openScope()) {
-                    response = callModel(messages, tools, run, control, stepObservation);
+                    response = callModel(messages, tools, run, taskId == null, control, stepObservation);
                 }
                 checkCancelled(run, control);
                 run.replaceStep(stepId, run.step(stepId).finish(RunStepStatus.SUCCEEDED, Instant.now(), null,
@@ -964,11 +986,11 @@ public final class CollaborativeWorkflow implements AutoCloseable {
     }
 
     private ModelResponse callModel(List<Message> messages, List<com.example.agent.model.ToolDefinition> tools,
-                                    RunRecord run, Control control, Observation stepObservation)
+                                    RunRecord run, boolean includeMemory, Control control, Observation stepObservation)
             throws WorkflowAbort, ModelClientException {
         FutureTask<ModelResponse> task = new FutureTask<>(() -> {
             try (var scope = stepObservation.openScope()) {
-                return model.complete(modelMessages(run, messages), modelTools(run, tools), modelOptions(run));
+                return model.complete(modelMessages(run, messages, includeMemory), modelTools(run, tools), modelOptions(run));
             }
         });
         control.registerModelTask(task);

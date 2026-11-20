@@ -5,6 +5,9 @@ import com.example.agent.client.ModelClientException;
 import com.example.agent.model.ModelResponse;
 import com.example.agent.model.ToolCall;
 import com.example.agent.observability.AgentTelemetry;
+import com.example.agent.memory.MemoryContextSnapshot;
+import com.example.agent.memory.MemoryEntry;
+import com.example.agent.memory.MemoryKind;
 import com.example.agent.runtime.AgentRuntime;
 import com.example.agent.tool.AgentTool;
 import com.example.agent.tool.ToolExecutor;
@@ -52,6 +55,72 @@ import static org.mockito.Mockito.spy;
 
 class CollaborativeWorkflowTest {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    void injectsPinnedMemoryForSupervisorButNeverBroadcastsItToWorkers() throws Exception {
+        ToolRegistry tools = tools();
+        WorkerRegistry workers = contractWorkers();
+        AtomicReference<List<com.example.agent.model.Message>> plannerMessages = new AtomicReference<>();
+        AtomicReference<List<com.example.agent.model.Message>> workerMessages = new AtomicReference<>();
+        AtomicReference<List<com.example.agent.model.Message>> summaryMessages = new AtomicReference<>();
+        String privateMemory = "memory-private-preference-7c91";
+        var memorySnapshot = new MemoryContextSnapshot(false, "policy-v1", List.of(new MemoryEntry(
+                java.util.UUID.randomUUID(), "default", "trip.preference", MemoryKind.PREFERENCE,
+                privateMemory, 1, java.time.Instant.now(), java.time.Instant.now())), 10);
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) {
+                plannerMessages.set(List.copyOf(messages));
+                return plan("""
+                        {"route":"DELEGATE","tasks":[{"taskId":"forecast","workerId":"weather",
+                         "description":"Look up forecast","dependencies":[],"deliverableIds":["weather"],
+                         "inputBindings":[{"field":"city","source":"PARENT_REQUEST","parentValue":"Beijing"}],
+                         "acceptanceCriteria":["Return city and forecast"]}],
+                         "deliverables":[{"deliverableId":"weather","description":"forecast"}]}
+                        """);
+            }
+            if (messages.getFirst().content().contains("Worker output contract")) {
+                workerMessages.set(List.copyOf(messages));
+                return new ModelResponse("{\"city\":\"Beijing\",\"forecast\":\"sunny\"}", List.of());
+            }
+            summaryMessages.set(List.copyOf(messages));
+            return new ModelResponse("Beijing forecast is sunny.", List.of());
+        };
+        var store = new InMemoryRunStore();
+        var config = new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1));
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, workers, store, config, JSON,
+                    AgentTelemetry.noop(), RunLeasePolicy.DEFAULT, null, null, null, null,
+                    ignored -> memorySnapshot);
+            var run = workflow.runTracked("Check Beijing weather");
+            assertEquals(RunStatus.SUCCEEDED, run.status());
+        }
+        assertTrue(plannerMessages.get().stream().anyMatch(message -> message.content().contains(privateMemory)));
+        assertTrue(summaryMessages.get().stream().anyMatch(message -> message.content().contains(privateMemory)));
+        assertTrue(workerMessages.get().stream().anyMatch(message -> message.content().contains("Beijing")));
+        assertFalse(workerMessages.get().stream().anyMatch(message -> message.content().contains(privateMemory)));
+    }
+
+    @Test
+    void collaborativeNoSplitFallbackReceivesThePinnedMemorySnapshot() throws Exception {
+        ToolRegistry tools = tools();
+        String remembered = "single-agent-memory-marker";
+        var snapshot = new MemoryContextSnapshot(false, "policy-v1", List.of(new MemoryEntry(
+                java.util.UUID.randomUUID(), "default", "answer.style", MemoryKind.PREFERENCE, remembered, 1,
+                java.time.Instant.now(), java.time.Instant.now())), 10);
+        AtomicReference<List<com.example.agent.model.Message>> fallbackMessages = new AtomicReference<>();
+        ModelClient model = (messages, definitions) -> {
+            if (isPlannerRequest(messages)) return plan("{\"route\":\"NO_SPLIT\",\"tasks\":[],\"deliverables\":[]}");
+            fallbackMessages.set(List.copyOf(messages));
+            return new ModelResponse("done", List.of());
+        };
+        try (ToolExecutor executor = new ToolExecutor(tools, Duration.ofSeconds(1))) {
+            var workflow = new CollaborativeWorkflow(model, tools, new WorkerRegistry(), new InMemoryRunStore(),
+                    new CollaborationConfig(3, 1, 6, 2, 0, Duration.ofSeconds(5), Duration.ofSeconds(1)), JSON,
+                    AgentTelemetry.noop(), RunLeasePolicy.DEFAULT, null, null, null, null, ignored -> snapshot);
+            assertEquals(RunStatus.SUCCEEDED, workflow.runTracked("simple request").status());
+        }
+        assertTrue(fallbackMessages.get().stream().anyMatch(message -> message.content().contains(remembered)));
+    }
 
     @Test
     void refusesToStartRunWhenPinnedWorkerContractVersionIsUnavailable() throws Exception {

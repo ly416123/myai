@@ -29,6 +29,12 @@ class AgentApplicationContextTest {
     private RunStore runStore;
 
     @Autowired
+    private com.example.agent.memory.MemoryStore memoryStore;
+
+    @Autowired
+    private com.example.agent.memory.MemoryService memoryService;
+
+    @Autowired
     private com.example.agent.workflow.RunPollingWorker runPollingWorker;
 
     @Autowired
@@ -53,6 +59,8 @@ class AgentApplicationContextTest {
     @Test
     void applicationWiresPostgresRunStoreWithoutStartingWebApi() {
         assertInstanceOf(PostgresRunStore.class, runStore);
+        assertInstanceOf(com.example.agent.memory.PostgresMemoryStore.class, memoryStore);
+        assertNotNull(memoryService);
         assertNotNull(runPollingWorker);
         assertNotNull(childTaskPollingWorker);
         assertNotNull(meterRegistry.find("hikaricp.connections.active").gauge());

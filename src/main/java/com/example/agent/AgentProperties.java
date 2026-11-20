@@ -27,6 +27,10 @@ public class AgentProperties {
     private String executionMode = "interactive";
     private String configurationEnvironment = "local";
     private String configurationAgentId = "myai";
+    private String memoryNamespace = "default";
+    private int memoryMaxEntries = 5;
+    private int memoryMaxCharacters = 2_000;
+    private int memoryNamespaceLimit = 500;
     private int configurationEvaluationMinimumCases = 1;
     private boolean configurationAutoRollbackEnabled;
     private int configurationAutoRollbackMinimumSamples = 10;
@@ -86,6 +90,14 @@ public class AgentProperties {
     public void setConfigurationEnvironment(String value) { this.configurationEnvironment = value; }
     public String getConfigurationAgentId() { return configurationAgentId; }
     public void setConfigurationAgentId(String value) { this.configurationAgentId = value; }
+    public String getMemoryNamespace() { return memoryNamespace; }
+    public void setMemoryNamespace(String value) { this.memoryNamespace = value; }
+    public int getMemoryMaxEntries() { return memoryMaxEntries; }
+    public void setMemoryMaxEntries(int value) { this.memoryMaxEntries = value; }
+    public int getMemoryMaxCharacters() { return memoryMaxCharacters; }
+    public void setMemoryMaxCharacters(int value) { this.memoryMaxCharacters = value; }
+    public int getMemoryNamespaceLimit() { return memoryNamespaceLimit; }
+    public void setMemoryNamespaceLimit(int value) { this.memoryNamespaceLimit = value; }
     public int getConfigurationEvaluationMinimumCases() { return configurationEvaluationMinimumCases; }
     public void setConfigurationEvaluationMinimumCases(int value) { this.configurationEvaluationMinimumCases = value; }
     public boolean isConfigurationAutoRollbackEnabled() { return configurationAutoRollbackEnabled; }

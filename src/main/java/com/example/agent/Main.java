@@ -20,6 +20,9 @@ import com.example.agent.evaluation.AgentEvaluationDatasetLoader;
 import com.example.agent.configuration.AgentConfigurationService;
 import com.example.agent.configuration.AgentConfigRelease;
 import com.example.agent.configuration.AgentConfigRevision;
+import com.example.agent.memory.MemoryService;
+import com.example.agent.memory.MemoryEntry;
+import com.example.agent.memory.MemoryKind;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import org.springframework.boot.ApplicationArguments;
@@ -47,13 +50,14 @@ public final class Main implements ApplicationRunner {
     private final EvaluationRepository evaluationRepository;
     private final ObjectMapper mapper;
     private final AgentConfigurationService configurationService;
+    private final MemoryService memoryService;
 
     @Autowired
     public Main(AgentRuntime runtime, CollaborativeWorkflow collaborative, RunStore runStore,
                 AgentProperties properties, RunSubmissionService submissions, ToolExecutionAuditStore toolAuditStore,
                 AgentEvaluationRunner evaluationRunner, AgentEvaluationConfig evaluationConfig,
                 EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper,
-                AgentConfigurationService configurationService) {
+                AgentConfigurationService configurationService, MemoryService memoryService) {
         this.runtime = runtime;
         this.collaborative = collaborative;
         this.runStore = runStore;
@@ -66,6 +70,7 @@ public final class Main implements ApplicationRunner {
         this.evaluationRepository = evaluationRepository;
         this.mapper = mapper;
         this.configurationService = configurationService;
+        this.memoryService = memoryService;
     }
 
     /** Compatibility constructor for CLI adapter unit tests that do not exercise release management. */
@@ -74,7 +79,16 @@ public final class Main implements ApplicationRunner {
                 AgentEvaluationRunner evaluationRunner, AgentEvaluationConfig evaluationConfig,
                 EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper) {
         this(runtime, collaborative, runStore, properties, submissions, toolAuditStore, evaluationRunner,
-                evaluationConfig, evaluationService, evaluationRepository, mapper, null);
+                evaluationConfig, evaluationService, evaluationRepository, mapper, null, null);
+    }
+
+    public Main(AgentRuntime runtime, CollaborativeWorkflow collaborative, RunStore runStore,
+                AgentProperties properties, RunSubmissionService submissions, ToolExecutionAuditStore toolAuditStore,
+                AgentEvaluationRunner evaluationRunner, AgentEvaluationConfig evaluationConfig,
+                EvaluationService evaluationService, EvaluationRepository evaluationRepository, ObjectMapper mapper,
+                AgentConfigurationService configurationService) {
+        this(runtime, collaborative, runStore, properties, submissions, toolAuditStore, evaluationRunner,
+                evaluationConfig, evaluationService, evaluationRepository, mapper, configurationService, null);
     }
 
     @Override
@@ -103,7 +117,7 @@ public final class Main implements ApplicationRunner {
         System.out.println("Java Agent Workflow 已启动。输入 /runs 查看记录，/tool-audit <runId> 查看工具审计，/resume <runId> 恢复单 Agent，"
                 + "/multi <任务> 试用 Supervisor–Worker，/enqueue <任务> 提交后台任务，"
                 + "/multi-enqueue <任务> 提交协作任务，/multi-resume <runId> 恢复多 Agent，"
-                + "/eval help 查看评测命令，/config help 管理配置版本，/exit 结束。\n");
+                + "/memory help 管理显式记忆，/eval help 查看评测命令，/config help 管理配置版本，/exit 结束。\n");
         try (var scanner = new Scanner(System.in)) {
             while (true) {
                 System.out.print("你> ");
@@ -120,6 +134,12 @@ public final class Main implements ApplicationRunner {
                 if (input.equals("/config") || input.startsWith("/config ")) {
                     try { executeConfigurationCommand(input.equals("/config") ? "" : input.substring(8).trim()); }
                     catch (Exception e) { System.err.println("配置操作未完成；请检查命令参数或门禁结果。"); }
+                    System.out.println();
+                    continue;
+                }
+                if (input.equals("/memory") || input.startsWith("/memory ")) {
+                    try { executeMemoryCommand(input.equals("/memory") ? "" : input.substring(8).trim()); }
+                    catch (Exception e) { System.err.println("记忆操作未完成；请检查命令参数或存储状态。"); }
                     System.out.println();
                     continue;
                 }
@@ -385,6 +405,43 @@ public final class Main implements ApplicationRunner {
             }
             default -> throw new IllegalArgumentException("Unknown config command");
         }
+    }
+
+    private void executeMemoryCommand(String command) {
+        if (memoryService == null) throw new IllegalStateException("Memory management is unavailable");
+        String[] parts = command == null || command.isBlank() ? new String[]{"help"} : command.split("\\s+", 4);
+        if (parts[0].equals("help")) {
+            System.out.println("/memory list | show <key> | remember <key> <preference|fact> <content>");
+            System.out.println("/memory update <key> <preference|fact> <content> | delete <key>");
+            return;
+        }
+        switch (parts[0]) {
+            case "list" -> memoryService.list().forEach(Main::printMemoryEntry);
+            case "show" -> {
+                requireArguments(parts, 2);
+                printMemoryEntry(memoryService.find(parts[1]).orElseThrow(MemoryService.MemoryNotFoundException::new));
+            }
+            case "remember", "update" -> {
+                requireArguments(parts, 4);
+                MemoryKind kind;
+                try { kind = MemoryKind.valueOf(parts[2].toUpperCase(java.util.Locale.ROOT)); }
+                catch (IllegalArgumentException invalidKind) { throw new IllegalArgumentException("Memory kind must be preference or fact"); }
+                MemoryEntry entry = parts[0].equals("remember")
+                        ? memoryService.remember(parts[1], kind, parts[3])
+                        : memoryService.update(parts[1], kind, parts[3]);
+                System.out.printf("记忆已%s：%s v%d%n", parts[0].equals("remember") ? "保存" : "更新", entry.key(), entry.version());
+            }
+            case "delete" -> {
+                requireArguments(parts, 2);
+                memoryService.delete(parts[1]);
+                System.out.println("记忆已删除；已存在的 Run 快照按 Run 保留策略保留。");
+            }
+            default -> System.out.println("未知记忆子命令。输入 /memory help 查看用法。");
+        }
+    }
+
+    private static void printMemoryEntry(MemoryEntry entry) {
+        System.out.printf("%s [%s] v%d: %s%n", entry.key(), entry.kind(), entry.version(), entry.content());
     }
 
     private long currentAssignmentVersion() {

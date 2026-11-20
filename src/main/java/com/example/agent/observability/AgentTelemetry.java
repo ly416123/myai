@@ -160,6 +160,19 @@ public final class AgentTelemetry {
         if (meters != null) meters.counter("agent.worker.poll.failures").increment();
     }
 
+    /** Records memory operation volume and latency with a closed set of low-cardinality tags. */
+    public void recordMemoryOperation(String operation, String result, Duration duration) {
+        if (operation == null || !java.util.Set.of("remember", "update", "delete", "find", "list", "retrieve").contains(operation)
+                || result == null || !java.util.Set.of("success", "not_found", "conflict", "rejected", "failure", "degraded").contains(result)
+                || duration == null || duration.isNegative()) {
+            throw new IllegalArgumentException("Invalid memory telemetry values");
+        }
+        if (meters == null) return;
+        meters.counter("agent.memory.operations", "operation", operation, "result", result).increment();
+        Timer.builder("agent.memory.operation.duration").tag("operation", operation).tag("result", result)
+                .register(meters).record(duration);
+    }
+
     /** Publishes the configured desired Run Worker replica count for availability alerting. */
     public void configureRunWorkers(int expectedInstances) {
         if (expectedInstances < 1) throw new IllegalArgumentException("Expected worker count must be positive");
