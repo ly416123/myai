@@ -16,11 +16,11 @@ MyAi 是面向企业应用演进的 LLM Agent Runtime，使用 Java 21 实现，
 - [阶段四：评测生命周期与可比较结果（功能验收、GitHub Actions 与 L5 交付闭环通过）](docs/stages/phase-04-summary.html)
 - [阶段五需求：Worker 能力注册与子任务数据契约](docs/plans/phase-05-requirements.md)
 - [阶段五验收总结：版本化 Worker 输入/输出契约](docs/stages/phase-05-summary.html)
-- [阶段六验收总结：Agent 配置版本、发布与运行时切换（PR #10 已合并；候选版本已在 L5 验收）](docs/stages/phase-06-summary.html)
+- [阶段六验收总结：Agent 配置版本、发布与运行时切换（PR #10 已合并；后续由阶段七镜像覆盖）](docs/stages/phase-06-summary.html)
 - [阶段六需求与范围](docs/plans/phase-06-requirements.md)
 - [记忆能力后续候选规划（阶段七之后）](docs/plans/memory-capabilities-roadmap.md)
 - [阶段七结构化记忆设计规格（实现分支）](docs/superpowers/specs/2026-11-18-memory-system-design.md)
-- [阶段七验收总结：显式结构化记忆](docs/stages/phase-07-summary.html)
+- [阶段七验收总结：显式结构化记忆（PR #11 已合并，CI 与 L5 V13 验收通过）](docs/stages/phase-07-summary.html)
 
 每个阶段验收通过后，都会在 `docs/stages/` 生成 HTML 总结，记录前阶段遗留问题、本阶段的解决方案与设计理由、实际效果、验收证据和剩余限制，并附上反映该阶段实际交付形态、包含分层体系的整体架构图。复杂阶段可按逻辑分层、运行部署和执行流程拆成多张图或多个文件，并从总结页明确链接。阶段总结中的架构图是各阶段验收时点的历史快照，不代表当前企业架构的完整形态，可分别查看：[阶段一历史快照](docs/stages/phase-01-summary.html#architecture)、[阶段二历史快照](docs/stages/phase-02-summary.html#architecture)、[阶段三历史快照](docs/stages/phase-03-summary.html#architecture)。当前企业化架构与交付状态以[升级路线图](docs/architecture/enterprise-migration-roadmap.md)为准。详见项目根目录的 `AGENTS.md`。
 

@@ -42,20 +42,20 @@
 <body>
 <main>
   <header>
-    <p class="meta">MyAI · 阶段验收记录 · 2026-11-18</p>
+    <p class="meta">MyAI · 阶段验收记录 · 2026-11-20</p>
     <h1>阶段七：显式结构化记忆</h1>
-    <p class="meta">验收基线：从阶段六已验证提交 <code>a20f925b2cc974664562c0b305cfe87b6ffe1a67</code> 创建独立分支 <code>codex/phase-07-memory-system</code>。本总结描述该分支的阶段七实际交付形态，不代表阶段六 PR 状态或 L5 部署状态。</p>
+    <p class="meta">验收基线：阶段七分支最初从阶段六实现提交 <code>a20f925b2cc974664562c0b305cfe87b6ffe1a67</code> 创建，阶段六合并后将阶段七提交移植到主线提交 <code>2ad6570cb8800a071115e8543ae014e9b4da545a</code> 之上。阶段七通过 PR #11 合入，最终主线提交为 <code>24fef5a221a7227dfc12d283fbf4c4115f58ecb7</code>。</p>
   </header>
 
   <section class="callout">
     <h2 style="margin-top:0;border:0">验收结论</h2>
-    <p><strong>阶段七首版功能验收通过。</strong> 本机完整 Maven 构建成功；281 项测试全部通过，0 失败、0 错误、0 跳过。PostgreSQL 16 Testcontainers 实际执行 Flyway V13、记忆 CRUD、Run 检查点快照往返及并发边界。阶段验收只说明本文限定范围已交付，不等于生产就绪；当前仍没有可信用户身份/多用户隔离，也未在 L5 部署阶段七镜像或迁移。</p>
+    <p><strong>阶段七范围验收与交付通过。</strong> 本机完整 Maven 构建 281 项测试通过，0 失败、0 错误、0 跳过；GitHub Actions PR 验证和主线提交的 <code>verify</code>/<code>publish-images</code> 均成功（run <code>44693639672</code>、<code>44693773623</code>）。L5 已部署正式镜像 <code>24fef5a221a7227dfc12d283fbf4c4115f58ecb7</code>：Worker 2/2 Ready、无重启，Flyway 最新成功版本 V13，记忆表存在，Prometheus 2/2 targets healthy。阶段验收不等于生产就绪；当前仍没有可信用户身份/多用户隔离。</p>
   </section>
 
   <section>
     <h2>1. 阶段目标与前阶段问题</h2>
     <p>阶段六的配置版本可以固定每个 Run 的系统提示词、模型参数、工具权限与 Worker 契约，但跨 Run 没有独立的长期记忆：单次对话只保存在该 Run 的消息历史和检查点中。阶段七在不替换 Agent Runtime / Workflow 控制循环的前提下，添加可显式管理、可审计、可检索的偏好/事实记忆，并让 Run 使用固定的记忆快照。</p>
-    <p>本阶段范围由用户确认：当前单一受控 CLI 操作者；只在明确的记忆管理命令上写入；新 Run 自动检索少量相关记忆；协作任务只把需要的信息放进相应上下文。阶段六合并、发布和 L5 部署不属于本阶段验收范围。</p>
+    <p>本阶段范围由用户确认：当前单一受控 CLI 操作者；只在明确的记忆管理命令上写入；新 Run 自动检索少量相关记忆；协作任务只把需要的信息放进相应上下文。交付按“实现验收—远端 CI/镜像发布—L5 部署”闭环完成。</p>
   </section>
 
   <section>
@@ -74,7 +74,7 @@
 
   <section id="architecture">
     <h2>3. 阶段完成时的整体分层架构</h2>
-    <p class="meta">架构快照时间：2026-11-18，阶段七本机验收通过时。图示包含既有阶段六能力与本阶段新增记忆能力；虚线表示可观测数据流，不表示跨服务的生产部署或独立记忆服务。</p>
+    <p class="meta">架构快照时间：2026-11-20，阶段七正式镜像在 L5 部署验收后。逻辑图包含既有阶段六能力与本阶段新增记忆能力；虚线表示可观测数据流，不表示独立记忆服务。</p>
     <figure>
       <svg viewBox="0 0 1100 650" role="img" aria-labelledby="arch-title arch-desc">
         <title id="arch-title">MyAI 阶段七整体分层架构</title>
@@ -124,7 +124,31 @@
         <path class="arrow dashed" d="M510 338 C500 470 500 510 480 536"/>
         <path class="arrow dashed" d="M565 338 C560 500 580 570 600 609"/>
       </svg>
-      <figcaption>应用与记忆逻辑仍运行在同一 MyAI 进程，记忆数据和 Run 检查点共用 PostgreSQL；本阶段没有引入向量数据库、独立检索服务或新的常驻服务。</figcaption>
+      <figcaption>应用与记忆逻辑仍运行在 MyAI Worker 进程，记忆数据和 Run 检查点共用 PostgreSQL；本阶段没有引入向量数据库、独立检索服务或新的常驻服务。</figcaption>
+    </figure>
+
+    <h3>L5 部署视图</h3>
+    <p class="meta">部署快照：2026-11-20。只展示 MyAI namespace 的阶段七实际工作负载及主要依赖。</p>
+    <figure>
+      <svg viewBox="0 0 1000 300" role="img" aria-labelledby="deploy-title deploy-desc">
+        <title id="deploy-title">阶段七 L5 部署视图</title>
+        <desc id="deploy-desc">单节点 K3s 的 myai namespace 部署两个 Agent Worker，连接 PostgreSQL；模型流量经两个模型出站代理到 DeepSeek；OTel Collector 接收观测数据并转发到 Prometheus 与 Tempo，Grafana 展示指标和 Trace。</desc>
+        <defs><marker id="deploy-arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#52637a"/></marker></defs>
+        <rect class="layer" x="12" y="12" width="976" height="270" rx="12"/>
+        <text class="label" x="32" y="42">L5 · 单节点 K3s · myai namespace</text>
+        <rect class="purple" x="55" y="88" width="220" height="68"/><text class="label" x="92" y="118">Agent Worker × 2</text><text class="small" x="82" y="140">正式 SHA 镜像 · Flyway V13</text>
+        <rect class="node" x="370" y="88" width="210" height="68"/><text class="label" x="425" y="118">PostgreSQL</text><text class="small" x="405" y="140">Run / Checkpoint / Memory</text>
+        <rect class="green" x="55" y="190" width="220" height="58"/><text class="label" x="91" y="217">OTel Collector</text><text class="small" x="96" y="238">Logs / Metrics / Traces</text>
+        <rect class="node" x="370" y="190" width="210" height="58"/><text class="label" x="420" y="217">Prometheus / Tempo</text><text class="small" x="435" y="238">指标 / Trace</text>
+        <rect class="amber" x="690" y="88" width="245" height="68"/><text class="label" x="731" y="118">模型出站代理 × 2</text><text class="small" x="744" y="140">受控 HTTPS 出站</text>
+        <rect class="blue" x="735" y="190" width="155" height="58"/><text class="label" x="772" y="217">DeepSeek</text><text class="small" x="767" y="238">模型服务</text>
+        <path d="M275 118 L370 118" stroke="#52637a" stroke-width="2" marker-end="url(#deploy-arrow)"/>
+        <path d="M165 156 L165 190" stroke="#52637a" stroke-width="2" marker-end="url(#deploy-arrow)"/>
+        <path d="M275 218 L370 218" stroke="#52637a" stroke-width="2" marker-end="url(#deploy-arrow)"/>
+        <path d="M275 101 C420 50 590 50 690 101" stroke="#52637a" stroke-width="2" fill="none" marker-end="url(#deploy-arrow)"/>
+        <path d="M812 156 L812 190" stroke="#52637a" stroke-width="2" marker-end="url(#deploy-arrow)"/>
+      </svg>
+      <figcaption>部署期间只滚动更新 <code>myai-agent-worker</code>，未修改其他 namespace 或基础设施工作负载；Worker 镜像平台 manifest 摘要为 <code>sha256:d1e22a43b599da0d09a4e6f6f120b8bed0fceae0347dbf040f38974fb827d9e6</code>。</figcaption>
     </figure>
 
     <h3>Run 创建、记忆检索与恢复</h3>
@@ -165,7 +189,7 @@
   <section>
     <h2>5. 实际效果与可重复验证</h2>
     <p>新 Run 会按输入查询最多 500 条活动记忆候选并把最相关的最多 5 条固定到 Run；向模型注入的完整提示文本受 2000 Unicode 码点上限约束。运行途中更新或删除记忆不会修改已保存 Run 的快照。PostgreSQL 集成测试覆盖 V13 迁移、同 key 冲突、删除后复用 key、版本并发、namespace 并发上限、审计 append-only、内容更新事务回滚，以及 Run 检查点中的快照往返。</p>
-    <p>本阶段没有真实 Provider 质量测试，也没有在 L5 部署。确定性与持久化范围由 Fake、Testcontainers 和模型 stub 覆盖，不能证明真实模型一定遵从偏好或事实正确。</p>
+    <p>本阶段没有真实 Provider 质量测试。确定性与持久化范围由 Fake、Testcontainers 和模型 stub 覆盖，不能证明真实模型一定遵从偏好或事实正确。</p>
     <pre><code>DOCKER_HOST=unix:///Users/gecko/.colima/default/docker.sock \
 TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
 mvn clean verify
@@ -187,7 +211,7 @@ mvn clean verify
       <li>删除记忆不删除已持久化 Run 快照；Run 自动保留/删除目前依既有策略处理，默认自动清理关闭。若需要主体级删除，需要单独设计快照索引和删除流程。</li>
       <li>记忆内容会进入模型请求；向 DeepSeek 发送前仍受项目现有数据处理边界约束。当前凭据模式检测只能拒绝部分常见密钥字面量，不能替代人工数据定级。</li>
       <li>当前固定回归验证的是有限规则和数据边界，不代表记忆准确率、真实回答质量、语义检索召回率或生产可用性。</li>
-      <li>本阶段在独立阶段七分支验收，未触发 L5 部署，也不改变阶段六合并/发布流程。</li>
+      <li>L5 启动期间两只新 Pod 各出现过一次短暂 Startup probe 告警，随后均 Ready、无容器重启；后续需持续观察较慢启动时的探针裕度。</li>
     </ul>
     <p>下一步应先基于实际调用场景和固定评测样例判断是否需要更强的语义检索、来源管理或身份域隔离，再拆分相应目标；不默认引入 RAG 或自动记忆抽取。</p>
   </section>
